@@ -16,6 +16,8 @@ class SentinelAccessibilityService : AccessibilityService() {
     private var paymentOpenTs: Long = 0L
     private var currentSessionId: String = UUID.randomUUID().toString()
     private var prePaymentAlertShown: Boolean = false
+    private var paymentSessionCallerTrust: CallerTrust = CallerTrust.UNKNOWN
+    private var paymentSessionHasCallContext: Boolean = false
 
     private lateinit var eventFlusher: EventFlusher
     private lateinit var callStateMonitor: CallStateMonitor
@@ -66,9 +68,12 @@ class SentinelAccessibilityService : AccessibilityService() {
         )
         appendToBuffer(telemetryEvent)
 
-        if (mappedType == EventType.WINDOW_CHANGE && packageName in PAYMENT_PACKAGES) {
+        if (mappedType == EventType.WINDOW_CHANGE && packageName in PAYMENT_PACKAGES && !isPaymentSessionActive) {
             isPaymentSessionActive = true
             paymentOpenTs = ts
+            val callContext = resolveCallContextForPaymentOpen()
+            paymentSessionCallerTrust = callContext.first
+            paymentSessionHasCallContext = callContext.second
             appendToBuffer(
                 telemetryEvent.copy(
                     eventType = EventType.PAYMENT_OPEN,
@@ -118,13 +123,16 @@ class SentinelAccessibilityService : AccessibilityService() {
         )
         Log.d("SentinelX", "Payment confirm event added, dwellMs=$confirmDwellMs, buffer=${getBufferSnapshot().size}")
 
-        val callerTrust = mapCallerTrust(resolveCallerNumber())
+        val callerTrust = paymentSessionCallerTrust
         val snapshot = getBufferSnapshot()
+        val callEndTs = callStateMonitor.lastCallEndTs.takeIf { it > 0L }
+            ?: callStateMonitor.getRecentCallInfo(maxAgeSeconds = 300L)?.ts
+            ?: 0L
         val features = SessionFeatures.fromEvents(
             events = snapshot,
             sessionId = currentSessionId,
             userId = android.os.Build.ID,
-            callEndTs = callStateMonitor.lastCallEndTs,
+            callEndTs = callEndTs,
             callerTrust = callerTrust,
             voiceStressScore = voiceStressAnalyzer.getCurrentStressScore(),
             networkThreatScore = 0,
@@ -162,6 +170,8 @@ class SentinelAccessibilityService : AccessibilityService() {
         isPaymentSessionActive = false
         paymentOpenTs = 0L
         prePaymentAlertShown = false
+        paymentSessionCallerTrust = CallerTrust.UNKNOWN
+        paymentSessionHasCallContext = false
     }
 
     private fun resolveCallerNumber(): String? {
@@ -173,13 +183,11 @@ class SentinelAccessibilityService : AccessibilityService() {
     private fun maybeShowPrePaymentIntervention() {
         if (prePaymentAlertShown) return
 
-        val secondsSinceEnd = callStateMonitor.getSecondsSinceCallEnd()
-        val callActive = callStateMonitor.currentCallState != TelephonyManager.CALL_STATE_IDLE
-        val recentCall = callStateMonitor.getRecentCallInfo(maxAgeSeconds = 900L)
-        val callerTrust = mapCallerTrust(resolveCallerNumber())
-
-        val recentCallContext = callActive || secondsSinceEnd <= 180L || recentCall != null
-        if (!recentCallContext) return
+        if (!paymentSessionHasCallContext) {
+            Log.d("SentinelX", "Pre-payment intervention skipped (no fresh call context)")
+            return
+        }
+        val callerTrust = paymentSessionCallerTrust
 
         val isMarkedScammer = callerTrust == CallerTrust.SCAMMER_MARKED
         val isUnknownContext = callerTrust == CallerTrust.UNKNOWN || callerTrust == CallerTrust.REPEATED_UNKNOWN
@@ -213,6 +221,19 @@ class SentinelAccessibilityService : AccessibilityService() {
         )
         prePaymentAlertShown = true
         Log.d("SentinelX", "Pre-payment intervention shown score=$score label=$label callerTrust=${callerTrust.name}")
+    }
+
+    private fun resolveCallContextForPaymentOpen(): Pair<CallerTrust, Boolean> {
+        val callActive = callStateMonitor.currentCallState != TelephonyManager.CALL_STATE_IDLE
+        if (callActive) {
+            val number = resolveCallerNumber()
+            return mapCallerTrust(number) to true
+        }
+        val recentCall = callStateMonitor.getRecentCallInfo(maxAgeSeconds = 180L)
+        if (recentCall != null) {
+            return mapCallerTrust(recentCall.number) to true
+        }
+        return CallerTrust.UNKNOWN to false
     }
 
     private fun appendToBuffer(event: SentinelEvent) {

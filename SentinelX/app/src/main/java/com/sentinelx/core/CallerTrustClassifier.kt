@@ -74,7 +74,7 @@ class CallerTrustClassifier(
             ContactsContract.PhoneLookup.CONTENT_FILTER_URI,
             android.net.Uri.encode(number),
         )
-        return runCatching {
+        val directLookup = runCatching {
             context.contentResolver.query(
                 uri,
                 arrayOf(ContactsContract.PhoneLookup._ID),
@@ -82,6 +82,24 @@ class CallerTrustClassifier(
                 null,
                 null,
             )?.use { it.moveToFirst() } ?: false
+        }.getOrDefault(false)
+        if (directLookup) return true
+
+        // Fallback for devices that store contacts with different country-code formatting.
+        return runCatching {
+            context.contentResolver.query(
+                ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
+                arrayOf(ContactsContract.CommonDataKinds.Phone.NUMBER),
+                null,
+                null,
+                null,
+            )?.use { cursor ->
+                while (cursor.moveToNext()) {
+                    val candidate = normalize(cursor.getString(0).orEmpty())
+                    if (numbersEquivalent(number, candidate)) return@use true
+                }
+                false
+            } ?: false
         }.getOrDefault(false)
     }
 
@@ -121,6 +139,14 @@ class CallerTrustClassifier(
         if (normalized.startsWith("91") && normalized.length == 12) normalized = normalized.substring(2)
         if (normalized.startsWith("0") && normalized.length == 11) normalized = normalized.substring(1)
         return normalized
+    }
+
+    private fun numbersEquivalent(a: String, b: String): Boolean {
+        val na = normalize(a)
+        val nb = normalize(b)
+        if (na.isBlank() || nb.isBlank()) return false
+        if (na == nb) return true
+        return na.takeLast(10) == nb.takeLast(10)
     }
 
     private fun hasPermission(permission: String): Boolean {
