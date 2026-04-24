@@ -80,6 +80,12 @@ class RiskEngine {
     }
 
     private fun calcTransitionVelocityScore(f: SessionFeatures): Int {
+        // KNOWN_CONTACT or BUSINESS_NUMBER = no transition risk at all
+        // A family member calling before you pay is completely normal
+        if (f.callerTrust == "KNOWN_CONTACT" || f.callerTrust == "BUSINESS_NUMBER") {
+            return 0
+        }
+
         var points = 0
         if (f.secondsSinceCall < 30) {
             points += 16

@@ -56,6 +56,29 @@ if DASHBOARD_DIR.exists():
     app.mount("/dashboard", StaticFiles(directory="dashboard"), name="dashboard")
 
 
+def _safe_update_session(session_id: str, fields: dict[str, Any]) -> list[dict[str, Any]]:
+    if not session_id or not fields:
+        return []
+    mutable = dict(fields)
+    for _ in range(len(mutable)):
+        try:
+            updated = db.table("sessions").update(mutable).eq("id", session_id).execute()
+            return updated.data or []
+        except Exception as exc:
+            msg = str(exc)
+            missing_key = None
+            for key in list(mutable.keys()):
+                if key in msg:
+                    missing_key = key
+                    break
+            if missing_key is None:
+                break
+            mutable.pop(missing_key, None)
+            if not mutable:
+                break
+    return []
+
+
 def _caller_trust_points(value: str) -> int:
     normalized = (value or "").upper()
     if normalized in {"KNOWN", "KNOWN_CONTACT"}:
@@ -278,13 +301,14 @@ async def explain(payload: dict):
     session_id = risk_result.get("session_id") or session_features.get("session_id")
     if session_id:
         update_doc = {
-            "llm_summary": explanation.get("dashboard_summary", ""),
+            "llm_summary": explanation.get("dashboard_summary", explanation.get("risk_explanation", "")),
             "llm_user_prompt": explanation.get("user_prompt", ""),
             "threat_type": explanation.get("threat_type", "BEHAVIORAL_ANOMALY"),
+            "recommended_action": explanation.get("recommended_action", "WARN"),
+            "fraud_likelihood": explanation.get("fraud_likelihood", "MEDIUM"),
         }
         try:
-            updated = db.table("sessions").update(update_doc).eq("id", session_id).execute()
-            updated_rows = updated.data or []
+            updated_rows = _safe_update_session(str(session_id), update_doc)
             if updated_rows:
                 await manager.broadcast({"type": "session_updated", "session": updated_rows[0]})
         except Exception as exc:

@@ -1,14 +1,5 @@
 from __future__ import annotations
 
-# Example output (HIGH_RISK):
-# {"risk_explanation":"Rapid post-call payment behavior with multiple pressure indicators.","user_prompt":"This payment looks risky due to unusual urgency and caller context. Please pause and verify independently before continuing.","guardian_message":"SentinelX detected a high-risk payment pattern and paused action. Please call the user now to verify the request before any transfer.","dashboard_summary":"High-risk scoring triggered by caller trust, fast transition, high tap density, and elevated voice stress.","threat_type":"UPI_SCAM"}
-#
-# Example output (SUSPICIOUS):
-# {"risk_explanation":"Behavior deviates from baseline with moderate stress indicators.","user_prompt":"We detected unusual payment behavior. Please confirm the recipient and reason before you proceed.","guardian_message":"SentinelX flagged suspicious payment behavior. Please check in with the user if possible.","dashboard_summary":"Suspicious pattern with moderate anomaly and caller uncertainty.","threat_type":"BEHAVIORAL_ANOMALY"}
-#
-# Example output (SAFE):
-# {"risk_explanation":"Session appears consistent with normal behavior.","user_prompt":"No major risk signals detected. Continue carefully and verify recipient details.","guardian_message":"No emergency alert. Session currently appears safe.","dashboard_summary":"Low-risk session with normal interaction cadence.","threat_type":"BEHAVIORAL_ANOMALY"}
-
 import json
 import os
 from typing import Any
@@ -27,12 +18,30 @@ ALLOWED_THREAT_TYPES = {
     "BEHAVIORAL_ANOMALY",
 }
 
+ALLOWED_FRAUD_LIKELIHOOD = {"LOW", "MEDIUM", "HIGH", "CRITICAL"}
+ALLOWED_ACTIONS = {"ALLOW", "WARN", "DELAY_AND_VERIFY", "BLOCK_AND_ALERT"}
+LIKELIHOOD_ORDER = {"LOW": 0, "MEDIUM": 1, "HIGH": 2, "CRITICAL": 3}
+
 
 def _word_limit(text: str, max_words: int) -> str:
-    words = text.split()
+    words = (text or "").split()
     if len(words) <= max_words:
-        return text.strip()
+        return (text or "").strip()
     return " ".join(words[:max_words]).strip()
+
+
+def _as_int(value: Any, default: int = 0) -> int:
+    try:
+        return int(value)
+    except Exception:
+        return default
+
+
+def _as_float(value: Any, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except Exception:
+        return default
 
 
 def _choose_threat_type(risk_result: dict[str, Any], session_features: dict[str, Any]) -> str:
@@ -40,13 +49,13 @@ def _choose_threat_type(risk_result: dict[str, Any], session_features: dict[str,
     triggered = risk_result.get("triggered_signals", []) or []
     signal_names = " ".join(str(item.get("name", "")) for item in triggered if isinstance(item, dict)).lower()
 
-    if bool(session_features.get("is_whatsapp_voip")) and session_features.get("seconds_since_call", 9999) < 60:
+    if bool(session_features.get("is_whatsapp_voip")) and _as_int(session_features.get("seconds_since_call", 9999), 9999) < 60:
         return "VISHING"
-    if session_features.get("network_threat_score", 0) >= 10:
+    if _as_int(session_features.get("network_threat_score", 0), 0) >= 10:
         return "MULE_TRANSFER"
-    if session_features.get("voice_stress_score", 0.0) >= 0.8:
+    if _as_float(session_features.get("voice_stress_score", 0.0), 0.0) >= 0.8:
         return "VOICE_COERCION"
-    if "caller trust" in signal_names and str(session_features.get("caller_trust", "")).upper() in {"UNKNOWN", "REPEATED_UNKNOWN"}:
+    if "caller trust" in signal_names and str(session_features.get("caller_trust", "")).upper() in {"UNKNOWN", "REPEATED_UNKNOWN", "SCAMMER_MARKED"}:
         return "IMPERSONATION"
     if "transition velocity" in signal_names or "confirmation pressure" in signal_names:
         return "UPI_SCAM"
@@ -55,45 +64,150 @@ def _choose_threat_type(risk_result: dict[str, Any], session_features: dict[str,
     return "BEHAVIORAL_ANOMALY"
 
 
-def _fallback_explanation(risk_result: dict[str, Any], session_features: dict[str, Any]) -> dict[str, str]:
-    score = int(risk_result.get("total_score", risk_result.get("score", 0)) or 0)
-    label = str(risk_result.get("label", "SAFE"))
+def build_evidence(risk_result: dict[str, Any], session_features: dict[str, Any]) -> list[str]:
+    evidence: list[str] = []
+    seconds_since_call = _as_int(session_features.get("seconds_since_call", 9999), 9999)
+    caller_trust = str(session_features.get("caller_trust", "UNKNOWN")).upper()
+    switch_count = _as_int(session_features.get("switch_count_20s", 0), 0)
+    confirm_ms = _as_int(session_features.get("confirm_dwell_ms", 14000), 14000)
+    tap_density = _as_float(session_features.get("tap_density", 1.0), 1.0)
+    voice_stress = _as_float(session_features.get("voice_stress_score", 0.0), 0.0)
+    network_score = _as_int(session_features.get("network_threat_score", 0), 0)
+    anomaly_score = _as_float(risk_result.get("anomaly_score", 0.0), 0.0)
+
+    if seconds_since_call < 9999:
+        evidence.append(f"Payment attempted {seconds_since_call} seconds after call ended")
+    if caller_trust in {"UNKNOWN", "REPEATED_UNKNOWN", "SCAMMER_MARKED"}:
+        if caller_trust == "SCAMMER_MARKED":
+            evidence.append("Caller matches user-marked scammer number")
+        else:
+            evidence.append("Unknown caller context")
+    if bool(session_features.get("is_whatsapp_voip")):
+        evidence.append("WhatsApp/voice-call-to-payment pattern detected")
+    if switch_count >= 2:
+        evidence.append(f"High app switch count: {switch_count} in 20 seconds")
+    if confirm_ms <= 5000:
+        evidence.append(f"Fast confirmation time: {confirm_ms} ms")
+    if tap_density >= 3.0:
+        evidence.append(f"High tap density near confirmation: {tap_density:.2f}")
+    if voice_stress >= 0.4:
+        evidence.append(f"Voice stress indicator elevated: {voice_stress:.2f}")
+    if network_score > 0:
+        evidence.append(f"Network threat score: {network_score}/15")
+    if anomaly_score > 0:
+        evidence.append(f"Behavioral anomaly score: {anomaly_score:.2f}")
+
+    if not evidence:
+        evidence.append("No strong fraud indicators detected in current session signals")
+    return evidence
+
+
+def _fallback_explanation(risk_result: dict[str, Any], session_features: dict[str, Any]) -> dict[str, Any]:
+    score = _as_int(risk_result.get("total_score", risk_result.get("score", 0)), 0)
+    label = str(risk_result.get("label", "SAFE")).upper()
     threat_type = _choose_threat_type(risk_result, session_features)
+    evidence = build_evidence(risk_result, session_features)
+
+    if score >= 95:
+        likelihood = "CRITICAL"
+        action = "BLOCK_AND_ALERT"
+    elif score >= 80:
+        likelihood = "HIGH"
+        action = "DELAY_AND_VERIFY"
+    elif score >= 40:
+        likelihood = "MEDIUM"
+        action = "WARN"
+    else:
+        likelihood = "LOW"
+        action = "ALLOW"
 
     risk_explanation = (
-        f"Score {score}/120 labeled {label}. Signals indicate caller/context pressure "
-        f"with behavioral deviation and session urgency."
+        "Observed a possible scam pattern based on caller context, timing, interaction pressure, "
+        "and behavioral indicators. This is not a definitive fraud confirmation."
     )
     user_prompt = _word_limit(
-        "This payment may be unsafe due to unusual urgency and behavior. "
-        "Pause now, verify the caller independently, and confirm recipient details before continuing.",
+        "This appears to be a high-risk pattern. Pause payment, verify caller identity independently, and confirm recipient details before proceeding.",
         45,
     )
     guardian_message = _word_limit(
-        "SentinelX flagged a high-risk payment pattern with scam indicators. "
-        "Please call immediately to verify the request before any transfer is completed.",
+        "SentinelX flagged a possible scam pattern during payment activity. Please contact the user now and verify the request through a trusted channel.",
         60,
     )
     dashboard_summary = _word_limit(
-        "Fallback explanation used. Session flagged using risk score, behavioral deviation, "
-        "voice stress, and network context signals for operator review.",
+        f"{label} pattern flagged with score {score}/120. Review observed evidence and verify before permitting payment.",
         80,
     )
 
-    return {
-        "risk_explanation": risk_explanation,
-        "user_prompt": user_prompt,
-        "guardian_message": guardian_message,
-        "dashboard_summary": dashboard_summary,
-        "threat_type": threat_type if threat_type in ALLOWED_THREAT_TYPES else "BEHAVIORAL_ANOMALY",
-    }
+    return _apply_guardrails(
+        {
+            "fraud_likelihood": likelihood,
+            "risk_explanation": risk_explanation,
+            "observed_evidence": evidence,
+            "missing_evidence": ["No definitive fraud confirmation available."],
+            "user_prompt": user_prompt,
+            "guardian_message": guardian_message,
+            "dashboard_summary": dashboard_summary,
+            "recommended_action": action,
+            "threat_type": threat_type,
+        },
+        risk_result,
+    )
 
 
-async def explain(risk_result: dict, session_features: dict) -> dict:
+def _apply_guardrails(explanation: dict[str, Any], risk_result: dict[str, Any]) -> dict[str, Any]:
+    score = _as_int(risk_result.get("total_score", risk_result.get("score", 0)), 0)
+    label = str(risk_result.get("label", "SAFE")).upper()
+
+    likelihood = str(explanation.get("fraud_likelihood", "MEDIUM")).upper()
+    if likelihood not in ALLOWED_FRAUD_LIKELIHOOD:
+        likelihood = "MEDIUM"
+
+    action = str(explanation.get("recommended_action", "WARN")).upper()
+    if action not in ALLOWED_ACTIONS:
+        action = "WARN"
+
+    threat_type = str(explanation.get("threat_type", "BEHAVIORAL_ANOMALY")).upper()
+    if threat_type not in ALLOWED_THREAT_TYPES:
+        threat_type = "BEHAVIORAL_ANOMALY"
+
+    if score >= 95:
+        action = "BLOCK_AND_ALERT"
+        likelihood = "CRITICAL"
+    elif score >= 80 and LIKELIHOOD_ORDER[likelihood] < LIKELIHOOD_ORDER["HIGH"]:
+        likelihood = "HIGH"
+
+    if label == "SAFE" and action == "BLOCK_AND_ALERT":
+        action = "WARN"
+
+    explanation["fraud_likelihood"] = likelihood
+    explanation["recommended_action"] = action
+    explanation["threat_type"] = threat_type
+
+    explanation["risk_explanation"] = _word_limit(str(explanation.get("risk_explanation", "")).strip(), 80)
+    explanation["user_prompt"] = _word_limit(str(explanation.get("user_prompt", "")).strip(), 45)
+    explanation["guardian_message"] = _word_limit(str(explanation.get("guardian_message", "")).strip(), 60)
+    explanation["dashboard_summary"] = _word_limit(str(explanation.get("dashboard_summary", "")).strip(), 80)
+
+    observed = explanation.get("observed_evidence")
+    missing = explanation.get("missing_evidence")
+    if not isinstance(observed, list):
+        observed = []
+    if not isinstance(missing, list):
+        missing = []
+    explanation["observed_evidence"] = [str(x) for x in observed if str(x).strip()]
+    explanation["missing_evidence"] = [str(x) for x in missing if str(x).strip()]
+    return explanation
+
+
+async def explain(risk_result: dict[str, Any], session_features: dict[str, Any]) -> dict[str, Any]:
     cfg_key = ""
     if config is not None:
         cfg_key = str(getattr(config, "OPENAI_KEY", "") or "")
     api_key = (os.getenv("OPENAI_KEY", "") or cfg_key).strip()
+    model = (os.getenv("OPENAI_MODEL", "gpt-4o-mini") or "gpt-4o-mini").strip()
+
+    evidence = build_evidence(risk_result, session_features)
+
     if not api_key or "placeholder" in api_key.lower():
         return _fallback_explanation(risk_result, session_features)
 
@@ -103,76 +217,73 @@ async def explain(risk_result: dict, session_features: dict) -> dict:
         return _fallback_explanation(risk_result, session_features)
 
     schema = {
-        "name": "sentinelx_explanation",
-        "strict": True,
-        "schema": {
-            "type": "object",
-            "additionalProperties": False,
-            "properties": {
-                "risk_explanation": {"type": "string"},
-                "user_prompt": {"type": "string"},
-                "guardian_message": {"type": "string"},
-                "dashboard_summary": {"type": "string"},
-                "threat_type": {
-                    "type": "string",
-                    "enum": sorted(ALLOWED_THREAT_TYPES),
-                },
-            },
-            "required": [
-                "risk_explanation",
-                "user_prompt",
-                "guardian_message",
-                "dashboard_summary",
-                "threat_type",
-            ],
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "fraud_likelihood": {"type": "string", "enum": sorted(ALLOWED_FRAUD_LIKELIHOOD)},
+            "risk_explanation": {"type": "string"},
+            "observed_evidence": {"type": "array", "items": {"type": "string"}},
+            "missing_evidence": {"type": "array", "items": {"type": "string"}},
+            "user_prompt": {"type": "string"},
+            "guardian_message": {"type": "string"},
+            "dashboard_summary": {"type": "string"},
+            "recommended_action": {"type": "string", "enum": sorted(ALLOWED_ACTIONS)},
+            "threat_type": {"type": "string", "enum": sorted(ALLOWED_THREAT_TYPES)},
         },
+        "required": [
+            "fraud_likelihood",
+            "risk_explanation",
+            "observed_evidence",
+            "missing_evidence",
+            "user_prompt",
+            "guardian_message",
+            "dashboard_summary",
+            "recommended_action",
+            "threat_type",
+        ],
     }
 
     system_prompt = (
-        "You are SentinelX, a real-time fraud prevention AI embedded in a payment app. "
-        "You analyze behavioral signals to detect scam-induced payments such as vishing, UPI fraud, "
-        "impersonation, voice coercion, and mule transfers. You never claim fraud definitively. "
-        "You ask the user to verify. You speak calmly in simple language because the user may be distressed. "
-        "Keep user-facing text under 45 words. Be specific about observed signals."
+        "You are SentinelX fraud explanation engine. "
+        "Return strict JSON only. Never claim fraud is 100% confirmed. "
+        "Use phrases like 'high-risk pattern' or 'possible scam pattern'. "
+        "Use only provided signals and evidence; do not invent facts. "
+        "Signals allowed: caller trust, call-to-payment time, app switching, confirmation dwell time, "
+        "tap density, voice stress indicator, network threat score, behavioral anomaly score. "
+        "If evidence is weak, reflect uncertainty in missing_evidence."
     )
 
     user_prompt = (
         f"risk_result={json.dumps(risk_result, ensure_ascii=False)}\n"
         f"session_features={json.dumps(session_features, ensure_ascii=False)}\n"
-        "Return valid JSON only."
+        f"deterministic_evidence={json.dumps(evidence, ensure_ascii=False)}\n"
+        "Generate the required JSON."
     )
 
     client = AsyncOpenAI(api_key=api_key)
     try:
         response = await client.responses.create(
-            model="gpt-4o",
-            temperature=0.3,
-            max_output_tokens=500,
+            model=model,
+            temperature=0.1,
+            max_output_tokens=900,
             input=[
                 {"role": "system", "content": [{"type": "text", "text": system_prompt}]},
                 {"role": "user", "content": [{"type": "text", "text": user_prompt}]},
             ],
-            text={"format": {"type": "json_schema", "name": schema["name"], "schema": schema["schema"], "strict": True}},
+            text={
+                "format": {
+                    "type": "json_schema",
+                    "name": "sentinelx_explanation",
+                    "schema": schema,
+                    "strict": True,
+                }
+            },
         )
-
-        text = ""
-        if hasattr(response, "output_text") and response.output_text:
-            text = response.output_text
-        else:
-            text = str(response)
-
-        parsed = json.loads(text)
+        content = response.output_text if getattr(response, "output_text", None) else "{}"
+        parsed = json.loads(content)
         if not isinstance(parsed, dict):
-            raise ValueError("Non-dict JSON output")
-
-        if parsed.get("threat_type") not in ALLOWED_THREAT_TYPES:
-            parsed["threat_type"] = _choose_threat_type(risk_result, session_features)
-
-        parsed["user_prompt"] = _word_limit(str(parsed.get("user_prompt", "")), 45)
-        parsed["guardian_message"] = _word_limit(str(parsed.get("guardian_message", "")), 60)
-        parsed["dashboard_summary"] = _word_limit(str(parsed.get("dashboard_summary", "")), 80)
-        parsed["risk_explanation"] = str(parsed.get("risk_explanation", "")).strip()
-        return parsed
+            raise ValueError("LLM returned non-object JSON")
+        return _apply_guardrails(parsed, risk_result)
     except Exception:
         return _fallback_explanation(risk_result, session_features)
 
@@ -188,6 +299,7 @@ if __name__ == "__main__":
             {"name": "Transition Velocity", "pts": 20},
             {"name": "Voice Stress Index", "pts": 18},
         ],
+        "anomaly_score": 0.72,
     }
     demo_session = {
         "seconds_since_call": 18,
@@ -196,6 +308,7 @@ if __name__ == "__main__":
         "network_threat_score": 12,
         "confirm_dwell_ms": 1200,
         "switch_count_20s": 5,
+        "tap_density": 6.2,
         "is_whatsapp_voip": True,
     }
     result = asyncio.run(explain(demo_risk, demo_session))

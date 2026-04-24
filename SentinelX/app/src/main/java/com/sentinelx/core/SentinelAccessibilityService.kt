@@ -138,6 +138,21 @@ class SentinelAccessibilityService : AccessibilityService() {
             networkThreatScore = 0,
             geoHash = "tdr1j",
         )
+        // If caller is known contact AND no other suspicious signals — skip scoring entirely
+        val trust = mapCallerTrust(resolveCallerNumber())
+        if (trust == CallerTrust.KNOWN_CONTACT || trust == CallerTrust.BUSINESS_NUMBER) {
+            val secondsSince = callStateMonitor.getSecondsSinceCallEnd()
+            // Known contact + no recent call = definitely safe, don't even score
+            if (secondsSince > 300L || secondsSince == Long.MAX_VALUE) {
+                Log.d("SentinelX", "Skipping score — known contact, no recent call pressure")
+                resetPaymentSession()
+                currentSessionId = UUID.randomUUID().toString()
+                return
+            }
+            // Known contact called recently — score but with zero caller trust points (already handled in RiskEngine)
+            // Still score in case other signals (behavioral anomaly, voice stress) are high
+            Log.d("SentinelX", "Known contact called recently — scoring with zeroed caller trust")
+        }
         eventFlusher.flushAndScore(features)
         resetPaymentSession()
         currentSessionId = UUID.randomUUID().toString()
@@ -182,20 +197,32 @@ class SentinelAccessibilityService : AccessibilityService() {
 
     private fun maybeShowPrePaymentIntervention() {
         if (prePaymentAlertShown) return
+        // Get caller trust FIRST — if known contact, do nothing at all
+        val callerTrust = mapCallerTrust(resolveCallerNumber())
 
-        if (!paymentSessionHasCallContext) {
-            Log.d("SentinelX", "Pre-payment intervention skipped (no fresh call context)")
+        // KNOWN_CONTACT and BUSINESS_NUMBER = zero risk, skip entirely
+        if (callerTrust == CallerTrust.KNOWN_CONTACT ||
+            callerTrust == CallerTrust.BUSINESS_NUMBER) {
+            Log.d("SentinelX", "Pre-payment skipped — trusted caller: ${callerTrust.name}")
             return
         }
-        val callerTrust = paymentSessionCallerTrust
+
+        // Only check recent call context for unknown callers
+        val secondsSinceEnd = callStateMonitor.getSecondsSinceCallEnd()
+        val callActive = callStateMonitor.currentCallState != TelephonyManager.CALL_STATE_IDLE
+        val recentCall = callStateMonitor.getRecentCallInfo(maxAgeSeconds = 900L)
+        val recentCallContext = callActive || secondsSinceEnd <= 180L || recentCall != null
+
+        // If no recent call at all — no intervention needed
+        if (!recentCallContext) return
 
         val isMarkedScammer = callerTrust == CallerTrust.SCAMMER_MARKED
-        val isUnknownContext = callerTrust == CallerTrust.UNKNOWN || callerTrust == CallerTrust.REPEATED_UNKNOWN
-        val shouldAlert = isMarkedScammer || isUnknownContext
-        if (!shouldAlert) {
-            Log.d("SentinelX", "Pre-payment intervention skipped for trusted callerTrust=${callerTrust.name}")
-            return
-        }
+        val isUnknownContext = callerTrust == CallerTrust.UNKNOWN ||
+                               callerTrust == CallerTrust.REPEATED_UNKNOWN
+
+        // Only show for unknown/scammer callers
+        if (!isMarkedScammer && !isUnknownContext) return
+
         val score = if (isMarkedScammer) 96 else 84
         val label = "HIGH_RISK"
         val message = when {
@@ -205,13 +232,11 @@ class SentinelAccessibilityService : AccessibilityService() {
                 "High risk: payment attempt right after an unknown/recent call. Pause and verify independently."
             else -> "High risk payment behavior detected."
         }
-
         val signals = listOf(
             "Recent call context",
             "Payment app opened under pressure",
             "Caller trust: ${callerTrust.name}",
         )
-
         com.sentinelx.ui.InterventionManager.show(
             context = applicationContext,
             score = score,
@@ -220,7 +245,7 @@ class SentinelAccessibilityService : AccessibilityService() {
             signals = signals,
         )
         prePaymentAlertShown = true
-        Log.d("SentinelX", "Pre-payment intervention shown score=$score label=$label callerTrust=${callerTrust.name}")
+        Log.d("SentinelX", "Pre-payment intervention shown score=$score callerTrust=${callerTrust.name}")
     }
 
     private fun resolveCallContextForPaymentOpen(): Pair<CallerTrust, Boolean> {
