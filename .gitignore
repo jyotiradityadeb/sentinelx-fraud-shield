@@ -1,0 +1,14 @@
+.env
+venv/
+__pycache__/
+*.pyc
+models/*.pkl
+.idea/
+.DS_Store
+Thumbs.db
+SentinelX/.gradle/
+SentinelX/**/build/
+SentinelX/local.properties
+.tools/
+*.log
+sentinelx-backend/data/localdb.json

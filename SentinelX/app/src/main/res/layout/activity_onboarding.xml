@@ -1,0 +1,85 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#050A12"
+    android:orientation="vertical"
+    android:padding="20dp">
+
+    <TextView
+        android:id="@+id/titleText"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Your Behavioral Shield"
+        android:textColor="#E2E8F0"
+        android:textSize="28sp"
+        android:textStyle="bold" />
+
+    <TextView
+        android:id="@+id/bodyText"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="14dp"
+        android:text="SentinelX watches HOW you use your phone during payments — never WHAT you type or say."
+        android:textColor="#94A3B8"
+        android:textSize="16sp" />
+
+    <TextView
+        android:id="@+id/transparencyList"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="18dp"
+        android:textColor="#CBD5E1"
+        android:textSize="15sp"
+        android:visibility="gone" />
+
+    <Button
+        android:id="@+id/nextButton"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="22dp"
+        android:text="Next" />
+
+    <Button
+        android:id="@+id/enableButton"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="10dp"
+        android:text="Enable SentinelX"
+        android:visibility="gone" />
+
+    <Button
+        android:id="@+id/usageButton"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="10dp"
+        android:text="Grant Usage Access"
+        android:visibility="gone" />
+
+    <Button
+        android:id="@+id/guardianButton"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="10dp"
+        android:text="Set Guardian (Optional)"
+        android:visibility="gone" />
+
+    <Button
+        android:id="@+id/startButton"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="10dp"
+        android:enabled="false"
+        android:text="Start Protection"
+        android:visibility="gone" />
+
+    <TextView
+        android:id="@+id/statusText"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="12dp"
+        android:textColor="#FCD34D"
+        android:textSize="13sp"
+        android:visibility="gone" />
+
+</LinearLayout>
