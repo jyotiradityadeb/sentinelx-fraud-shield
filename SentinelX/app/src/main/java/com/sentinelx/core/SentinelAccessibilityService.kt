@@ -1,6 +1,7 @@
-package com.sentinelx.core
+﻿package com.sentinelx.core
 
 import android.accessibilityservice.AccessibilityService
+import android.content.Context
 import android.telephony.TelephonyManager
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
@@ -111,6 +112,14 @@ class SentinelAccessibilityService : AccessibilityService() {
     private fun onPaymentConfirm(ts: Long) {
         if (!isPaymentSessionActive) return
 
+        val trustNow = mapCallerTrust(resolveCallerNumber())
+        if (trustNow != CallerTrust.SCAMMER_MARKED) {
+            Log.d("SentinelX", "Payment allowed - caller not in blocked list (${trustNow.name})")
+            resetPaymentSession()
+            currentSessionId = UUID.randomUUID().toString()
+            return
+        }
+
         val confirmDwellMs = (ts - paymentOpenTs).coerceAtLeast(0L)
         appendToBuffer(
             SentinelEvent(
@@ -138,21 +147,15 @@ class SentinelAccessibilityService : AccessibilityService() {
             networkThreatScore = 0,
             geoHash = "tdr1j",
         )
-        // If caller is known contact AND no other suspicious signals — skip scoring entirely
-        val trust = mapCallerTrust(resolveCallerNumber())
-        if (trust == CallerTrust.KNOWN_CONTACT || trust == CallerTrust.BUSINESS_NUMBER) {
-            val secondsSince = callStateMonitor.getSecondsSinceCallEnd()
-            // Known contact + no recent call = definitely safe, don't even score
-            if (secondsSince > 300L || secondsSince == Long.MAX_VALUE) {
-                Log.d("SentinelX", "Skipping score — known contact, no recent call pressure")
-                resetPaymentSession()
-                currentSessionId = UUID.randomUUID().toString()
-                return
-            }
-            // Known contact called recently — score but with zero caller trust points (already handled in RiskEngine)
-            // Still score in case other signals (behavioral anomaly, voice stress) are high
-            Log.d("SentinelX", "Known contact called recently — scoring with zeroed caller trust")
+
+        val secsSinceCall = callStateMonitor.getSecondsSinceCallEnd()
+        if ((trustNow == CallerTrust.KNOWN_CONTACT || trustNow == CallerTrust.BUSINESS_NUMBER) && secsSinceCall > 300L) {
+            Log.d("SentinelX", "Safe payment - known contact, no pressure. Skipping risk score.")
+            resetPaymentSession()
+            currentSessionId = UUID.randomUUID().toString()
+            return
         }
+
         eventFlusher.flushAndScore(features)
         resetPaymentSession()
         currentSessionId = UUID.randomUUID().toString()
@@ -197,41 +200,29 @@ class SentinelAccessibilityService : AccessibilityService() {
 
     private fun maybeShowPrePaymentIntervention() {
         if (prePaymentAlertShown) return
-        // Get caller trust FIRST — if known contact, do nothing at all
-        val callerTrust = mapCallerTrust(resolveCallerNumber())
 
-        // KNOWN_CONTACT and BUSINESS_NUMBER = zero risk, skip entirely
-        if (callerTrust == CallerTrust.KNOWN_CONTACT ||
-            callerTrust == CallerTrust.BUSINESS_NUMBER) {
-            Log.d("SentinelX", "Pre-payment skipped — trusted caller: ${callerTrust.name}")
+        val resolvedNumber = resolveCallerNumber()
+        if (resolvedNumber.isNullOrBlank()) {
+            Log.d("SentinelX", "Pre-payment skipped - caller number unavailable")
+            return
+        }
+        val callerTrust = mapCallerTrust(resolvedNumber)
+        if (callerTrust != CallerTrust.SCAMMER_MARKED) {
+            Log.d("SentinelX", "Pre-payment skipped - non-blocked caller: ${callerTrust.name}")
             return
         }
 
-        // Only check recent call context for unknown callers
         val secondsSinceEnd = callStateMonitor.getSecondsSinceCallEnd()
         val callActive = callStateMonitor.currentCallState != TelephonyManager.CALL_STATE_IDLE
         val recentCall = callStateMonitor.getRecentCallInfo(maxAgeSeconds = 900L)
         val recentCallContext = callActive || secondsSinceEnd <= 180L || recentCall != null
-
-        // If no recent call at all — no intervention needed
         if (!recentCallContext) return
 
         val isMarkedScammer = callerTrust == CallerTrust.SCAMMER_MARKED
-        val isUnknownContext = callerTrust == CallerTrust.UNKNOWN ||
-                               callerTrust == CallerTrust.REPEATED_UNKNOWN
-
-        // Only show for unknown/scammer callers
-        if (!isMarkedScammer && !isUnknownContext) return
-
-        val score = if (isMarkedScammer) 96 else 84
+        if (!isMarkedScammer) return
+        val score = 96
         val label = "HIGH_RISK"
-        val message = when {
-            isMarkedScammer ->
-                "Critical risk: this caller is in your scammer list. Stop payment and verify through a trusted channel."
-            isUnknownContext ->
-                "High risk: payment attempt right after an unknown/recent call. Pause and verify independently."
-            else -> "High risk payment behavior detected."
-        }
+        val message = "Critical risk: this caller is in your scammer list. Stop payment and verify through a trusted channel."
         val signals = listOf(
             "Recent call context",
             "Payment app opened under pressure",
@@ -267,6 +258,10 @@ class SentinelAccessibilityService : AccessibilityService() {
                 eventBuffer.removeFirst()
             }
             eventBuffer.addLast(event)
+            Log.d(
+                "SentinelX",
+                "Event collected type=${event.eventType} pkg=${event.packageName} queued=${eventBuffer.size}",
+            )
         }
     }
 

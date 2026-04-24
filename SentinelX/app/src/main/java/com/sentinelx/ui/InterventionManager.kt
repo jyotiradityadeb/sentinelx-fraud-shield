@@ -1,4 +1,4 @@
-package com.sentinelx.ui
+﻿package com.sentinelx.ui
 
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -33,28 +33,11 @@ object InterventionManager {
 
     private val handler = Handler(Looper.getMainLooper())
 
-    fun show(
-        context: Context,
-        score: Int,
-        label: String,
-        llmUserPrompt: String,
-        signals: List<String> = emptyList(),
-    ) {
-        val normalizedLabel = label.uppercase()
-        if (normalizedLabel == "HIGH_RISK" || normalizedLabel == "SUSPICIOUS" || score >= 40) {
-            AlertActivity.start(
-                context = context.applicationContext,
-                score = score.coerceAtLeast(40),
-                label = if (normalizedLabel == "HIGH_RISK" || score >= 80) "HIGH_RISK" else "SUSPICIOUS",
-                prompt = llmUserPrompt,
-                signals = if (signals.isEmpty()) "-" else signals.joinToString(" | "),
-            )
-        }
+    fun show(context: Context, score: Int, label: String, llmUserPrompt: String, signals: List<String> = emptyList()) {
         when {
-            score >= 95 -> showTier3(context, score, llmUserPrompt, signals)
-            score >= 80 || label == "HIGH_RISK" -> showTier2(context, score, llmUserPrompt)
-            score >= 40 || label == "SUSPICIOUS" -> showTier1(context, score)
-            else -> Log.d("SentinelX", "No intervention required. score=$score label=$label")
+            score >= 80 || label.uppercase() == "HIGH_RISK" -> showTier3(context, score, llmUserPrompt, signals)
+            score >= 40 || label.uppercase() == "SUSPICIOUS" -> showTier2(context, score, llmUserPrompt)
+            else -> Log.d("SentinelX", "No intervention score=$score")
         }
     }
 
@@ -69,13 +52,6 @@ object InterventionManager {
     }
 
     private fun showTier1(context: Context, score: Int) {
-        AlertActivity.start(
-            context = context.applicationContext,
-            score = score.coerceAtLeast(40),
-            label = "SUSPICIOUS",
-            prompt = "Unusual payment behavior detected. Verify caller and recipient before paying.",
-            signals = "-",
-        )
         val appContext = context.applicationContext
         val manager = appContext.getSystemService(NotificationManager::class.java)
         ensureChannel(manager)
@@ -94,24 +70,30 @@ object InterventionManager {
 
     private fun showTier2(context: Context, score: Int, prompt: String) {
         if (!Settings.canDrawOverlays(context)) {
-            showTier1(context, score)
-            Log.d("SentinelX", "Tier2 fallback to notification (overlay permission missing)")
+            AlertActivity.start(
+                context = context.applicationContext,
+                score = score.coerceAtLeast(40),
+                label = "SUSPICIOUS",
+                prompt = prompt,
+                signals = "-",
+            )
+            Log.d("SentinelX", "Tier2 fallback to AlertActivity (overlay permission missing)")
             return
         }
         showOverlay(context, score, prompt, emptyList(), critical = false)
-        vibrate(context, longArrayOf(0L, 200L))
         Log.d("SentinelX", "Tier2 intervention shown: overlay dialog")
     }
 
     private fun showTier3(context: Context, score: Int, prompt: String, signals: List<String>) {
-        if (!Settings.canDrawOverlays(context)) {
-            showTier1(context, score)
-            Log.d("SentinelX", "Tier3 fallback to notification (overlay permission missing)")
-            return
-        }
-        showOverlay(context, score, prompt, signals, critical = true)
+        AlertActivity.start(
+            context = context.applicationContext,
+            score = score.coerceAtLeast(80),
+            label = "HIGH_RISK",
+            prompt = prompt,
+            signals = if (signals.isEmpty()) "-" else signals.joinToString(" | "),
+        )
         vibrate(context, longArrayOf(0L, 300L, 100L, 300L, 100L, 300L))
-        Log.d("SentinelX", "Tier3 intervention shown: full-screen overlay")
+        Log.d("SentinelX", "Tier3 intervention shown: AlertActivity full-screen")
     }
 
     private fun showOverlay(
@@ -126,8 +108,8 @@ object InterventionManager {
         dismissCurrentOverlay()
 
         val overlay = LayoutInflater.from(appContext).inflate(R.layout.overlay_high_risk, null, false)
-        overlay.findViewById<TextView>(R.id.overlayRiskTitle).text = if (critical) "HIGH RISK" else "SentinelX Alert"
-        overlay.findViewById<TextView>(R.id.overlayRiskScore).text = "Score: $score/120"
+        overlay.findViewById<TextView>(R.id.overlayRiskTitle).text = if (critical) "PAYMENT BLOCKED" else "PAYMENT WARNING"
+        overlay.findViewById<TextView>(R.id.overlayRiskScore).text = "$score / 120  ·  ${if (critical) "HIGH RISK" else "SUSPICIOUS"}"
         overlay.findViewById<TextView>(R.id.overlayRiskMessage).text = prompt
         overlay.findViewById<TextView>(R.id.overlaySignalSummary).text =
             if (signals.isEmpty()) "Signal summary unavailable." else signals.joinToString(" | ")
@@ -139,8 +121,9 @@ object InterventionManager {
             dismissCurrentOverlay()
         }
         overlay.findViewById<View>(R.id.btnOverrideRisk).setOnClickListener {
-            Log.d("SentinelX", "User override selected for risk overlay")
+            Log.d("SentinelX", "User override - launching recovery guide")
             dismissCurrentOverlay()
+            RecoveryGuideActivity.start(appContext)
         }
 
         val params = WindowManager.LayoutParams(

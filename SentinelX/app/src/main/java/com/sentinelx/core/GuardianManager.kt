@@ -8,6 +8,7 @@ import android.os.Handler
 import android.os.Looper
 import android.telephony.SmsManager
 import android.util.Log
+import androidx.core.content.ContextCompat
 
 class GuardianManager(private val context: Context) {
 
@@ -38,6 +39,10 @@ class GuardianManager(private val context: Context) {
         val phone = getGuardianPhone()
         if (phone.isNullOrBlank()) {
             Log.w(TAG, "No guardian configured, skipping SMS")
+            return false
+        }
+        if (ContextCompat.checkSelfPermission(context, android.Manifest.permission.SEND_SMS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            Log.w(TAG, "SEND_SMS permission missing, skipping SMS")
             return false
         }
 
@@ -96,10 +101,8 @@ class GuardianManager(private val context: Context) {
         }
         Log.d(TAG, "Alerting guardian. Score=$score, Type=$threatType")
         Handler(Looper.getMainLooper()).post {
-            val sent = sendGuardianWhatsApp(score, llmSummary, threatType)
-            if (!sent) {
-                sendGuardianSms(score, llmSummary, threatType)
-            }
+            val smsSent = sendGuardianSms(score, llmSummary, threatType)
+            if (!smsSent) sendGuardianWhatsApp(score, llmSummary, threatType)
         }
     }
 

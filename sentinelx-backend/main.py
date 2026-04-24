@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime
 from pathlib import Path
 from typing import Any
 
@@ -54,6 +55,13 @@ DASHBOARD_DIR = Path("dashboard")
 
 if DASHBOARD_DIR.exists():
     app.mount("/dashboard", StaticFiles(directory="dashboard"), name="dashboard")
+
+MESSAGING_PACKAGES = {
+    "com.whatsapp",
+    "org.telegram.messenger",
+    "com.google.android.apps.messaging",
+    "com.truecaller",
+}
 
 
 def _safe_update_session(session_id: str, fields: dict[str, Any]) -> list[dict[str, Any]]:
@@ -206,6 +214,115 @@ def _score_payload(payload_dict: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _now_iso() -> str:
+    return datetime.datetime.utcnow().isoformat()
+
+
+def _as_live_session(session_row: dict[str, Any], result: dict[str, Any] | None = None) -> dict[str, Any]:
+    result = result or {}
+    caller = str(session_row.get("caller", session_row.get("caller_trust", "UNKNOWN")))
+    score = int(session_row.get("score", result.get("score", 0)) or 0)
+    label = str(session_row.get("label", result.get("label", "SAFE")))
+    threat = str(session_row.get("threat", session_row.get("threat_type", "BEHAVIORAL_ANOMALY")))
+    llm_summary = str(session_row.get("llm_summary", ""))
+    timestamp = str(session_row.get("timestamp", session_row.get("created_at", _now_iso())))
+    return {
+        "id": session_row.get("id"),
+        "user_id": str(session_row.get("user_id", "unknown")),
+        "caller": caller,
+        "score": score,
+        "threat": threat,
+        "status": label,
+        "llm_summary": llm_summary,
+        "timestamp": timestamp,
+        "label": label,
+        "threat_type": threat,
+        "caller_trust": caller,
+        "created_at": timestamp,
+        "geo_hash": session_row.get("geo_hash", "tdr1j"),
+        "sig_caller_trust": int(session_row.get("sig_caller_trust", result.get("sig_caller_trust", 0)) or 0),
+        "sig_transition": int(session_row.get("sig_transition", result.get("sig_transition", 0)) or 0),
+        "sig_confirm_press": int(session_row.get("sig_confirm_press", result.get("sig_confirm_press", 0)) or 0),
+        "sig_behavioral": int(session_row.get("sig_behavioral", result.get("sig_behavioral", 0)) or 0),
+        "sig_voice_stress": int(session_row.get("sig_voice_stress", result.get("sig_voice_stress", 0)) or 0),
+        "sig_network": int(session_row.get("sig_network", result.get("sig_network", 0)) or 0),
+        "triggered_signals": session_row.get("triggered_signals", result.get("triggered_signals", [])),
+        "anomaly_score": float(session_row.get("anomaly_score", result.get("anomaly_score", 0.0)) or 0.0),
+    }
+
+
+async def _broadcast_new_session(session_row: dict[str, Any], result: dict[str, Any] | None = None) -> dict[str, Any]:
+    live_session = _as_live_session(session_row, result)
+    print(
+        f"[broadcast] type=new_session user={live_session['user_id']} score={live_session['score']} "
+        f"status={live_session['status']} clients={len(manager.active)}"
+    )
+    await manager.broadcast({"type": "new_session", "session": live_session})
+    return live_session
+
+
+def _persist_session_row(session_row: dict[str, Any]) -> dict[str, Any]:
+    try:
+        inserted = db.table("sessions").insert(session_row).execute()
+        inserted_data = inserted.data or []
+        return inserted_data[0] if inserted_data else session_row
+    except Exception as exc:
+        print(f"[db] session insert warning: {exc}")
+        return session_row
+
+
+def _derive_session_payload_from_events(payload: EventBatch) -> dict[str, Any] | None:
+    events = payload.events or []
+    if not events:
+        return None
+
+    payment_confirm = [e for e in events if str(e.event_type).upper() == "PAYMENT_CONFIRM"]
+    if not payment_confirm:
+        return None
+
+    ordered = sorted(events, key=lambda e: e.ts)
+    first_ts = ordered[0].ts
+    last_ts = ordered[-1].ts
+    confirm_ts = payment_confirm[-1].ts
+    payment_open = next((e for e in reversed(ordered) if str(e.event_type).upper() == "PAYMENT_OPEN" and e.ts <= confirm_ts), None)
+    call_end = next((e for e in reversed(ordered) if str(e.event_type).upper() == "CALL_END" and e.ts <= confirm_ts), None)
+
+    window_start = confirm_ts - 20_000
+    switch_count = len({e.package_name for e in ordered if e.ts >= window_start and str(e.event_type).upper() == "WINDOW_CHANGE" and e.package_name})
+    open_ts = payment_open.ts if payment_open else first_ts
+    confirm_dwell = max(0, confirm_ts - open_ts)
+    payment_window = max(1000, confirm_dwell)
+    tap_events = [e for e in ordered if str(e.event_type).upper() == "CLICK" and open_ts <= e.ts <= confirm_ts]
+    tap_density = round(len(tap_events) / (payment_window / 1000.0), 2)
+    revisit_count = len([e for e in ordered if str(e.event_type).upper() == "PAYMENT_OPEN"])
+    seconds_since_call = max(0, int((confirm_ts - call_end.ts) / 1000)) if call_end else 9999
+
+    packages_before_payment = {e.package_name for e in ordered if e.ts < open_ts and e.package_name}
+    is_messaging_before = any(pkg in MESSAGING_PACKAGES for pkg in packages_before_payment)
+    is_whatsapp_voip = any(e.package_name == "com.whatsapp" and str(e.call_state).upper() == "OFFHOOK" for e in ordered)
+
+    max_voice = max((float(e.voice_stress_score or 0.0) for e in ordered), default=0.0)
+    max_network = max((int(e.network_threat_score or 0) for e in ordered), default=0)
+    last = ordered[-1]
+
+    return {
+        "session_id": payload.session_id,
+        "user_id": payload.user_id,
+        "seconds_since_call": seconds_since_call,
+        "switch_count_20s": switch_count,
+        "confirm_dwell_ms": confirm_dwell,
+        "tap_density": tap_density,
+        "revisit_count": revisit_count,
+        "session_duration_ms": max(0, last_ts - first_ts),
+        "caller_trust": str(last.caller_trust or "UNKNOWN"),
+        "is_messaging_before": is_messaging_before,
+        "is_whatsapp_voip": is_whatsapp_voip,
+        "voice_stress_score": max_voice,
+        "network_threat_score": max_network,
+        "geo_hash": str(last.geo_hash or "tdr1j"),
+    }
+
+
 @app.on_event("startup")
 async def startup_event() -> None:
     print(f"SentinelX API ready - http://0.0.0.0:{config.PORT}")
@@ -230,6 +347,7 @@ async def health():
 
 @app.post("/events")
 async def events(payload: EventBatch):
+    print(f"[/events] received session_id={payload.session_id} user_id={payload.user_id} events={len(payload.events)}")
     rows = []
     for event in payload.events:
         rows.append(
@@ -251,19 +369,64 @@ async def events(payload: EventBatch):
     try:
         if rows:
             db.table("events").insert(rows).execute()
-        return {"status": "ok", "count": len(rows)}
+            print(f"[/events] inserted rows={len(rows)}")
     except Exception as exc:
         print(f"/events insert warning: {exc}")
         return {"status": "ok", "count": len(rows), "warning": "db_insert_failed"}
+
+    try:
+        derived = _derive_session_payload_from_events(payload)
+        if derived is not None:
+            print(f"[/events] derived scorable session payload for session_id={payload.session_id}")
+            result = _score_payload(derived)
+            session_row = {
+                "user_id": derived.get("user_id", "unknown"),
+                "caller": derived.get("caller_trust", "UNKNOWN"),
+                "score": result["score"],
+                "label": result["label"],
+                "threat_type": "PENDING_LLM",
+                "caller_trust": derived.get("caller_trust", "UNKNOWN"),
+                "geo_hash": derived.get("geo_hash", "tdr1j"),
+                "triggered_signals": result["triggered_signals"],
+                "sig_caller_trust": result["sig_caller_trust"],
+                "sig_transition": result["sig_transition"],
+                "sig_confirm_press": result["sig_confirm_press"],
+                "sig_behavioral": result["sig_behavioral"],
+                "sig_voice_stress": result["sig_voice_stress"],
+                "sig_network": result["sig_network"],
+                "anomaly_score": result["anomaly_score"],
+                "created_at": _now_iso(),
+                "timestamp": _now_iso(),
+            }
+            inserted = _persist_session_row(session_row)
+            await _broadcast_new_session(inserted, result)
+            return {
+                "status": "ok",
+                "count": len(rows),
+                "auto_scored": True,
+                "score": result["score"],
+                "label": result["label"],
+            }
+    except Exception as exc:
+        print(f"[/events] auto-score warning: {exc}")
+        return {"status": "ok", "count": len(rows), "warning": "auto_score_failed"}
+
+    return {"status": "ok", "count": len(rows), "auto_scored": False}
 
 
 @app.post("/score-session")
 async def score_session(payload: SessionPayload):
     payload_dict = _to_dict(payload)
+    print(f"[/score-session] payload session_id={payload_dict.get('session_id')} user_id={payload_dict.get('user_id')}")
     result = _score_payload(payload_dict)
+    print(
+        f"[/score-session] scored user={payload_dict.get('user_id')} score={result['score']} label={result['label']} "
+        f"signals={len(result['triggered_signals'])}"
+    )
 
     session_row = {
         "user_id": payload_dict.get("user_id", "unknown"),
+        "caller": payload_dict.get("caller_trust", "UNKNOWN"),
         "score": result["score"],
         "label": result["label"],
         "threat_type": "PENDING_LLM",
@@ -276,19 +439,14 @@ async def score_session(payload: SessionPayload):
         "sig_behavioral": result["sig_behavioral"],
         "sig_voice_stress": result["sig_voice_stress"],
         "sig_network": result["sig_network"],
+        "anomaly_score": result["anomaly_score"],
+        "created_at": _now_iso(),
+        "timestamp": _now_iso(),
     }
-    inserted_row = None
-    try:
-        inserted = db.table("sessions").insert(session_row).execute()
-        inserted_data = inserted.data or []
-        inserted_row = inserted_data[0] if inserted_data else session_row
-    except Exception as exc:
-        print(f"/score-session insert warning: {exc}")
-        inserted_row = session_row
-
-    await manager.broadcast({"type": "new_session", "session": inserted_row})
+    inserted_row = _persist_session_row(session_row)
+    live_session = await _broadcast_new_session(inserted_row, result)
     response = dict(result)
-    response["session_id"] = inserted_row.get("id", payload_dict.get("session_id"))
+    response["session_id"] = live_session.get("id", payload_dict.get("session_id"))
     return response
 
 
@@ -296,6 +454,7 @@ async def score_session(payload: SessionPayload):
 async def explain(payload: dict):
     risk_result = payload.get("risk_result", {}) or {}
     session_features = payload.get("session_features", {}) or {}
+    print(f"[/explain] request session_id={risk_result.get('session_id') or session_features.get('session_id')}")
     explanation = await explain_risk(risk_result, session_features)
 
     session_id = risk_result.get("session_id") or session_features.get("session_id")
@@ -310,7 +469,16 @@ async def explain(payload: dict):
         try:
             updated_rows = _safe_update_session(str(session_id), update_doc)
             if updated_rows:
-                await manager.broadcast({"type": "session_updated", "session": updated_rows[0]})
+                print(f"[/explain] updated session={session_id} threat={explanation.get('threat_type')}")
+                await manager.broadcast(
+                    {
+                        "type": "session_updated",
+                        "session_id": session_id,
+                        "threat_type": explanation.get("threat_type", "BEHAVIORAL_ANOMALY"),
+                        "llm_summary": explanation.get("dashboard_summary", ""),
+                        "llm_user_prompt": explanation.get("user_prompt", ""),
+                    }
+                )
         except Exception as exc:
             print(f"/explain update warning: {exc}")
 
@@ -330,11 +498,14 @@ async def sessions():
 @app.websocket("/live")
 async def live(ws: WebSocket):
     await manager.connect(ws)
+    print(f"[/live] client connected active_clients={len(manager.active)}")
     try:
         try:
             init = db.table("sessions").select("*").order("created_at", desc=True).limit(10).execute()
             sessions = init.data or []
-            await ws.send_json({"type": "initial_sessions", "sessions": sessions})
+            normalized = [_as_live_session(s) for s in sessions]
+            await ws.send_json({"type": "initial_sessions", "sessions": normalized})
+            print(f"[/live] sent initial_sessions={len(normalized)}")
         except Exception as exc:
             await ws.send_json({"type": "initial_sessions", "sessions": [], "warning": str(exc)})
 
@@ -343,6 +514,7 @@ async def live(ws: WebSocket):
             await ws.send_json({"type": "pong"})
     except WebSocketDisconnect:
         manager.disconnect(ws)
+        print(f"[/live] client disconnected active_clients={len(manager.active)}")
 
 
 @app.post("/threat-lookup")
@@ -379,44 +551,49 @@ async def threat_stats():
 
 @app.post("/notify-guardian")
 async def notify_guardian(payload: GuardianNotify):
-    alert_doc = {
-        "user_id": payload.user_id,
-        "score": payload.score,
-        "threat_type": payload.threat_type,
-        "llm_summary": payload.llm_summary,
-        "status": "android_native_guardian_flow",
-    }
-    await manager.broadcast({"type": "guardian_alert_requested", "payload": alert_doc})
     try:
-        db.table("sessions").update({"guardian_alerted": True}).eq("user_id", payload.user_id).execute()
-    except Exception:
-        pass
-    return {"status": "queued_for_device", "detail": "Use Android native SMS/WhatsApp guardian flow."}
+        db.table("sessions").update({"guardian_sms_sent": True}).eq(
+            "user_id", payload.user_id
+        ).order("created_at", desc=True).limit(1).execute()
+    except Exception as exc:
+        print(f"guardian log warning: {exc}")
+    await manager.broadcast(
+        {
+            "type": "guardian_alerted",
+            "user_id": payload.user_id,
+            "score": payload.score,
+            "threat_type": payload.threat_type,
+            "summary": payload.llm_summary,
+        }
+    )
+    return {"status": "logged"}
 
 
-@app.get("/demo-inject")
-async def demo_inject():
+@app.post("/demo-phone-session")
+async def demo_phone_session():
     payload = {
-        "user_id": "demo_inject_user",
-        "seconds_since_call": 14,
+        "session_id": "demo_phone_" + _now_iso(),
+        "user_id": "phone_demo_user",
+        "seconds_since_call": 18,
         "switch_count_20s": 5,
-        "confirm_dwell_ms": 1100,
-        "tap_density": 6.2,
-        "revisit_count": 2,
-        "session_duration_ms": 17000,
+        "confirm_dwell_ms": 1200,
+        "tap_density": 6.4,
+        "revisit_count": 3,
+        "session_duration_ms": 21000,
         "caller_trust": "UNKNOWN",
         "is_messaging_before": True,
         "is_whatsapp_voip": True,
-        "voice_stress_score": 0.79,
-        "network_threat_score": 10,
+        "voice_stress_score": 0.82,
+        "network_threat_score": 11,
         "geo_hash": "tdr1j",
     }
     result = _score_payload(payload)
-    row = {
+    session_row = {
         "user_id": payload["user_id"],
+        "caller": payload["caller_trust"],
         "score": result["score"],
         "label": result["label"],
-        "threat_type": "UPI_SCAM",
+        "threat_type": "VISHING",
         "caller_trust": payload["caller_trust"],
         "geo_hash": payload["geo_hash"],
         "triggered_signals": result["triggered_signals"],
@@ -426,14 +603,19 @@ async def demo_inject():
         "sig_behavioral": result["sig_behavioral"],
         "sig_voice_stress": result["sig_voice_stress"],
         "sig_network": result["sig_network"],
-        "llm_summary": "Demo inject event for live dashboard validation.",
-        "llm_user_prompt": "Pause and verify this transaction before proceeding.",
+        "anomaly_score": result["anomaly_score"],
+        "llm_summary": "Possible scam pattern detected from real-time call-to-payment behavior.",
+        "created_at": _now_iso(),
+        "timestamp": _now_iso(),
     }
-    inserted = db.table("sessions").insert(row).execute()
-    rows = inserted.data or []
-    session = rows[0] if rows else row
-    await manager.broadcast({"type": "new_session", "session": session})
-    return {"status": "ok", "session": session}
+    inserted = _persist_session_row(session_row)
+    live = await _broadcast_new_session(inserted, result)
+    return {"status": "ok", "session": live}
+
+
+@app.get("/demo-inject")
+async def demo_inject():
+    return await demo_phone_session()
 
 
 # Demo-only judge backup endpoints.

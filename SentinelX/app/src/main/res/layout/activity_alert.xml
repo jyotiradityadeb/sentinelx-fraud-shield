@@ -64,7 +64,9 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="16dp"
-            android:text="I Will Verify First" />
+            android:backgroundTint="#DC2626"
+            android:text="I Understand - Continue"
+            android:textColor="#FFFFFF"
+            android:textStyle="bold" />
     </LinearLayout>
 </LinearLayout>
-

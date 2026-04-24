@@ -1,91 +1,353 @@
 <?xml version="1.0" encoding="utf-8"?>
-<androidx.constraintlayout.widget.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:app="http://schemas.android.com/apk/res-auto"
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:padding="20dp">
+    android:background="#050A12"
+    android:fillViewport="true">
 
-    <TextView
-        android:id="@+id/statusText"
-        android:layout_width="0dp"
+    <LinearLayout
+        android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="SentinelX status"
-        android:textSize="18sp"
-        app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toTopOf="parent" />
+        android:orientation="vertical"
+        android:padding="16dp">
 
-    <Button
-        android:id="@+id/openAccessibilityButton"
-        android:layout_width="0dp"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="20dp"
-        android:text="Open Accessibility"
-        app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toBottomOf="@id/statusText" />
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
 
-    <Button
-        android:id="@+id/openUsageButton"
-        android:layout_width="0dp"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="12dp"
-        android:text="Open Usage Access"
-        app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toBottomOf="@id/openAccessibilityButton" />
+            <ImageView
+                android:layout_width="40dp"
+                android:layout_height="40dp"
+                android:src="@drawable/sentinelx_logo"
+                android:contentDescription="SentinelX" />
 
-    <Button
-        android:id="@+id/openBatteryButton"
-        android:layout_width="0dp"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="12dp"
-        android:text="Open App Battery Settings"
-        app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toBottomOf="@id/openUsageButton" />
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="10dp"
+                android:text="SentinelX"
+                android:textColor="#E2E8F0"
+                android:textSize="22sp"
+                android:textStyle="bold" />
 
-    <EditText
-        android:id="@+id/backendUrlInput"
-        android:layout_width="0dp"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="16dp"
-        android:hint="Backend URL (e.g. http://127.0.0.1:8000)"
-        android:inputType="textUri"
-        app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toBottomOf="@id/openBatteryButton" />
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="6dp"
+                android:text="v2"
+                android:textColor="#38BDF8"
+                android:textSize="12sp" />
 
-    <Button
-        android:id="@+id/saveBackendUrlButton"
-        android:layout_width="0dp"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="10dp"
-        android:text="Save Backend URL"
-        app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toBottomOf="@id/backendUrlInput" />
+            <Space
+                android:layout_width="0dp"
+                android:layout_height="1dp"
+                android:layout_weight="1" />
 
-    <EditText
-        android:id="@+id/scammerNumbersInput"
-        android:layout_width="0dp"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="16dp"
-        android:gravity="top|start"
-        android:hint="Scammer numbers (comma or new line)"
-        android:inputType="textMultiLine"
-        android:minLines="3"
-        app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toBottomOf="@id/saveBackendUrlButton" />
+            <TextView
+                android:id="@+id/statusPill"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:background="@drawable/bg_status_pill_green"
+                android:paddingStart="14dp"
+                android:paddingTop="6dp"
+                android:paddingEnd="14dp"
+                android:paddingBottom="6dp"
+                android:text="PROTECTED"
+                android:textColor="#4ade80"
+                android:textSize="11sp"
+                android:textStyle="bold" />
+        </LinearLayout>
 
-    <Button
-        android:id="@+id/saveScammerNumbersButton"
-        android:layout_width="0dp"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="10dp"
-        android:text="Save Scammer Numbers"
-        app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toBottomOf="@id/scammerNumbersInput" />
-</androidx.constraintlayout.widget.ConstraintLayout>
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:background="@drawable/bg_card_dark"
+            android:orientation="vertical"
+            android:padding="16dp">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:letterSpacing="0.1"
+                android:text="CURRENT RISK SCORE"
+                android:textAllCaps="true"
+                android:textColor="#64748B"
+                android:textSize="9sp" />
+
+            <TextView
+                android:id="@+id/riskScoreDisplay"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:text="0 / 120"
+                android:textColor="#4ade80"
+                android:textSize="42sp"
+                android:textStyle="bold" />
+
+            <ProgressBar
+                android:id="@+id/riskProgressBar"
+                style="?android:attr/progressBarStyleHorizontal"
+                android:layout_width="match_parent"
+                android:layout_height="8dp"
+                android:layout_marginTop="8dp"
+                android:max="120"
+                android:progress="0" />
+
+            <TextView
+                android:id="@+id/riskLabelText"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:text="SAFE"
+                android:textColor="#4ade80"
+                android:textSize="13sp"
+                android:textStyle="bold" />
+        </LinearLayout>
+
+        <GridLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:alignmentMode="alignMargins"
+            android:columnCount="2"
+            android:rowOrderPreserved="false"
+            android:useDefaultMargins="true">
+
+            <LinearLayout
+                android:id="@+id/sigCallerTrust"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_columnWeight="1"
+                android:background="@drawable/bg_card_dark_small"
+                android:orientation="vertical"
+                android:padding="12dp">
+
+                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="CALL" android:textSize="14sp" />
+                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="CALLER TRUST" android:textAllCaps="true" android:textColor="#64748B" android:textSize="9sp" />
+                <TextView android:id="@+id/sigCallerTrustVal" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="0" android:textColor="#4ade80" android:textSize="20sp" android:textStyle="bold" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:id="@+id/sigTransition"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_columnWeight="1"
+                android:background="@drawable/bg_card_dark_small"
+                android:orientation="vertical"
+                android:padding="12dp">
+                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="MOVE" android:textSize="14sp" />
+                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="TRANSITION" android:textAllCaps="true" android:textColor="#64748B" android:textSize="9sp" />
+                <TextView android:id="@+id/sigTransitionVal" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="0" android:textColor="#4ade80" android:textSize="20sp" android:textStyle="bold" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:id="@+id/sigConfirm"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_columnWeight="1"
+                android:background="@drawable/bg_card_dark_small"
+                android:orientation="vertical"
+                android:padding="12dp">
+                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="TIME" android:textSize="14sp" />
+                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="CONFIRM PRESS" android:textAllCaps="true" android:textColor="#64748B" android:textSize="9sp" />
+                <TextView android:id="@+id/sigConfirmVal" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="0" android:textColor="#4ade80" android:textSize="20sp" android:textStyle="bold" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:id="@+id/sigBehavioral"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_columnWeight="1"
+                android:background="@drawable/bg_card_dark_small"
+                android:orientation="vertical"
+                android:padding="12dp">
+                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="DNA" android:textSize="14sp" />
+                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="BEHAVIORAL" android:textAllCaps="true" android:textColor="#64748B" android:textSize="9sp" />
+                <TextView android:id="@+id/sigBehavioralVal" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="0" android:textColor="#4ade80" android:textSize="20sp" android:textStyle="bold" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:id="@+id/sigVoice"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_columnWeight="1"
+                android:background="@drawable/bg_card_dark_small"
+                android:orientation="vertical"
+                android:padding="12dp">
+                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="VOICE" android:textSize="14sp" />
+                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="VOICE STRESS" android:textAllCaps="true" android:textColor="#64748B" android:textSize="9sp" />
+                <TextView android:id="@+id/sigVoiceVal" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="0" android:textColor="#4ade80" android:textSize="20sp" android:textStyle="bold" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:id="@+id/sigNetwork"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_columnWeight="1"
+                android:background="@drawable/bg_card_dark_small"
+                android:orientation="vertical"
+                android:padding="12dp">
+                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="NET" android:textSize="14sp" />
+                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="NETWORK THREAT" android:textAllCaps="true" android:textColor="#64748B" android:textSize="9sp" />
+                <TextView android:id="@+id/sigNetworkVal" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="0" android:textColor="#4ade80" android:textSize="20sp" android:textStyle="bold" />
+            </LinearLayout>
+        </GridLayout>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:background="@drawable/bg_card_dark_small"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:padding="12dp"
+            android:weightSum="4">
+
+            <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:orientation="horizontal" android:gravity="center_vertical">
+                <View android:id="@+id/dotAccessibility" android:layout_width="8dp" android:layout_height="8dp" android:background="@drawable/bg_dot_red" />
+                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginStart="6dp" android:text="Accessibility" android:textColor="#94A3B8" android:textSize="10sp" />
+            </LinearLayout>
+
+            <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:orientation="horizontal" android:gravity="center_vertical">
+                <View android:id="@+id/dotUsage" android:layout_width="8dp" android:layout_height="8dp" android:background="@drawable/bg_dot_red" />
+                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginStart="6dp" android:text="Usage" android:textColor="#94A3B8" android:textSize="10sp" />
+            </LinearLayout>
+
+            <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:orientation="horizontal" android:gravity="center_vertical">
+                <View android:id="@+id/dotOverlay" android:layout_width="8dp" android:layout_height="8dp" android:background="@drawable/bg_dot_red" />
+                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginStart="6dp" android:text="Overlay" android:textColor="#94A3B8" android:textSize="10sp" />
+            </LinearLayout>
+
+            <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:orientation="horizontal" android:gravity="center_vertical">
+                <View android:id="@+id/dotBattery" android:layout_width="8dp" android:layout_height="8dp" android:background="@drawable/bg_dot_red" />
+                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginStart="6dp" android:text="Battery" android:textColor="#94A3B8" android:textSize="10sp" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:background="@drawable/bg_card_dark_small"
+            android:orientation="vertical"
+            android:padding="12dp">
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="GUARDIAN" android:textAllCaps="true" android:textColor="#64748B" android:textSize="9sp" />
+            <TextView android:id="@+id/guardianStatus" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="6dp" android:text="Not configured" android:textColor="#94A3B8" android:textSize="13sp" />
+            <Button android:id="@+id/btnSetGuardian" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="10dp" android:text="Set Guardian" android:background="@drawable/bg_button_outline_blue" android:textColor="#38BDF8" />
+            <Button
+                android:id="@+id/btnInformGuardian"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:background="@drawable/bg_button_outline_gray"
+                android:text="Inform Guardian Now"
+                android:textColor="#94A3B8" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:background="@drawable/bg_card_dark_small"
+            android:orientation="vertical"
+            android:padding="12dp">
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="RECENT EVENTS" android:textAllCaps="true" android:textColor="#64748B" android:textSize="9sp" />
+            <TextView
+                android:id="@+id/recentEventsLog"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:fontFamily="monospace"
+                android:text="No events yet"
+                android:textColor="#475569"
+                android:textSize="11sp" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:orientation="vertical">
+
+            <Button
+                android:id="@+id/btnOpenAccessibility"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:background="@drawable/bg_button_outline_blue"
+                android:text="Enable Accessibility"
+                android:textColor="#38BDF8" />
+
+            <Button
+                android:id="@+id/btnOpenUsage"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:background="@drawable/bg_button_outline_blue"
+                android:text="Grant Usage Access"
+                android:textColor="#38BDF8" />
+
+            <Button
+                android:id="@+id/btnBackendUrl"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:background="@drawable/bg_button_outline_gray"
+                android:text="Set Backend URL"
+                android:textColor="#94A3B8" />
+
+            <Button
+                android:id="@+id/btnSafeMode"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:background="@drawable/bg_button_dark_toggle_off"
+                android:text="Safe Payment Mode: OFF"
+                android:textColor="#E2E8F0" />
+
+            <Button
+                android:id="@+id/btnSimulateScam"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:background="@drawable/bg_button_red_soft"
+                android:text="TRIGGER HIGH RISK"
+                android:textColor="#fca5a5"
+                android:textStyle="bold" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:background="@drawable/bg_card_dark_small"
+            android:orientation="vertical"
+            android:padding="12dp">
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="BLOCKED NUMBERS" android:textColor="#64748B" android:textSize="9sp" />
+            <EditText
+                android:id="@+id/scammerNumbersInput"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:background="@drawable/bg_edit_dark"
+                android:gravity="top|start"
+                android:hint="Add scammer numbers..."
+                android:inputType="textMultiLine"
+                android:minLines="3"
+                android:padding="10dp"
+                android:textColor="#E2E8F0"
+                android:textColorHint="#64748B" />
+            <Button
+                android:id="@+id/btnSaveScammerNumbers"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:background="@drawable/bg_button_outline_blue"
+                android:text="Save"
+                android:textColor="#38BDF8" />
+        </LinearLayout>
+
+    </LinearLayout>
+</ScrollView>

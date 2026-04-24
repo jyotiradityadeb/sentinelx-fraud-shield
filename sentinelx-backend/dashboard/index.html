@@ -151,6 +151,7 @@
     input[type="range"] { width: 100%; }
     @keyframes pulse { 0%{box-shadow:0 0 0 0 currentColor;}70%{box-shadow:0 0 0 14px transparent;}100%{box-shadow:0 0 0 0 transparent;} }
     @keyframes slideIn { from { transform: translateY(-8px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+    @keyframes flashGreen { 0%,100%{background:#065f46} 50%{background:#10b981} }
     @media (max-width: 1024px) {
       .grid { grid-template-columns: 1fr; }
       .kpis { grid-template-columns: repeat(2, minmax(120px,1fr)); }
@@ -164,8 +165,12 @@
         <div class="title">SentinelX SOC Dashboard v2</div>
         <div id="wsStatus" class="status">WS: CONNECTING...</div>
       </div>
-      <button id="impactBtn" class="btn">₹ IMPACT</button>
+      <div style="display:flex;gap:8px;">
+        <button id="demoBtn" class="btn" onclick="triggerDemoScam()">⚡ DEMO SCAM</button>
+        <button id="impactBtn" class="btn">₹ IMPACT</button>
+      </div>
     </div>
+    <div id="guardianBanner" style="display:none;background:#065f46;color:#a7f3d0;padding:10px 16px;border-radius:8px;font-weight:700;font-size:13px;margin-bottom:10px;"></div>
 
     <div class="kpis">
       <div class="card"><div class="kpi-label">Total Sessions</div><div id="kTotal" class="kpi-val">0</div></div>
@@ -254,6 +259,7 @@
   </div>
 
   <script>
+    const LIVE_WS_URL = "ws://127.0.0.1:8000/live";
     const MAX_POINTS = 30;
     const state = {
       sessions: [],
@@ -264,8 +270,9 @@
       ws: null,
       networkReports: 0,
       falsePositives: 0,
-      savedRupees: 0,
+      rupeeSaved: 0,
     };
+    let reconnectDelay = 1000;
 
     const CITIES = {
       bengaluru: [12.9716, 77.5946],
@@ -356,16 +363,20 @@
 
     function normalizeSession(raw) {
       const r = raw || {};
+      const status = String(r.status || r.label || "SAFE");
+      const caller = String(r.caller || r.caller_trust || "UNKNOWN");
+      const threat = String(r.threat || r.threat_type || "BEHAVIORAL_ANOMALY");
+      const ts = r.timestamp || r.created_at || new Date().toISOString();
       return {
         id: r.id || null,
         score: Number(r.score ?? r.total_score ?? 0),
-        label: String(r.label || "SAFE"),
-        threat_type: String(r.threat_type || "BEHAVIORAL_ANOMALY"),
+        label: status,
+        threat_type: threat,
         llm_summary: String(r.llm_summary || r.dashboard_summary || "No summary available."),
         llm_user_prompt: String(r.llm_user_prompt || r.user_prompt || ""),
-        created_at: r.created_at || new Date().toISOString(),
+        created_at: ts,
         user_id: String(r.user_id || "unknown_user"),
-        caller_trust: String(r.caller_trust || "UNKNOWN"),
+        caller_trust: caller,
         geo_hash: String(r.geo_hash || "tdr1j"),
         sig_caller_trust: Number(r.sig_caller_trust || 0),
         sig_transition: Number(r.sig_transition || 0),
@@ -379,19 +390,19 @@
     function updateKpis() {
       const total = state.sessions.length;
       const high = state.sessions.filter(s => s.label === "HIGH_RISK").length;
-      state.savedRupees = high * 50000;
       state.networkReports = state.sessions.reduce((a,s) => a + (s.sig_network > 0 ? 1 : 0), 0);
       state.falsePositives = Math.max(0, Math.round((total - high) * 0.03));
       const fpr = total ? ((state.falsePositives / total) * 100) : 0;
 
       new countUp.CountUp("kTotal", total).start();
       new countUp.CountUp("kHigh", high).start();
-      document.getElementById("kSaved").textContent = `₹${(state.savedRupees/10000000).toFixed(1)}cr`;
+      new countUp.CountUp("kSaved", state.rupeeSaved, { prefix: "₹", separator: "," }).start();
       document.getElementById("kFpr").textContent = `${fpr.toFixed(1)}%`;
       document.getElementById("kNet").textContent = String(state.networkReports);
     }
 
     function updateCharts(s) {
+      console.log("[dashboard] graph update", { score: s.score, label: s.label, user: s.user_id });
       const t = new Date(s.created_at).toLocaleTimeString();
       riskChart.data.labels.push(t);
       riskChart.data.datasets[0].data.push(s.score);
@@ -436,15 +447,17 @@
     }
 
     function updateTable(s) {
+      console.log("[dashboard] table row update", s);
       const body = document.getElementById("sessionBody");
       const tr = document.createElement("tr");
       tr.className = `${labelClass(s.label)} row-in`;
+      tr.dataset.sessionId = s.id || "";
       tr.innerHTML = `
         <td>${new Date(s.created_at).toLocaleTimeString()}</td>
         <td>${s.user_id}</td>
         <td>${s.caller_trust}</td>
         <td><strong>${s.score}</strong></td>
-        <td>${s.threat_type}</td>
+        <td class="threat-type-cell">${s.threat_type}</td>
         <td>${s.llm_summary.slice(0, 64)}</td>
         <td><span class="badge b-${labelClass(s.label)}">${s.label}</span></td>
       `;
@@ -461,6 +474,10 @@
         state.sessions.unshift(s);
       }
       if (state.sessions.length > 200) state.sessions.length = 200;
+      if (s.label === "HIGH_RISK") {
+        state.rupeeSaved += Math.max(20000, s.score * 1000);
+      }
+      console.log("[dashboard] session received", s);
 
       updateKpis();
       updateCharts(s);
@@ -469,6 +486,44 @@
 
       const city = geohashToCity(s.geo_hash);
       addFraudEvent(city, s.label, s.threat_type, s.score);
+    }
+
+    function showGuardianBanner(userId, score, type) {
+      const banner = document.getElementById("guardianBanner");
+      banner.textContent = `👨‍👩‍👧 Guardian Alerted — ${userId} · Score ${score}/120 · ${type}`;
+      banner.style.display = "block";
+      banner.style.animation = "none";
+      banner.offsetHeight;
+      banner.style.animation = "flashGreen 0.5s ease 3";
+      setTimeout(() => banner.style.display = "none", 8000);
+    }
+
+    function handleMessage(data) {
+      if (data.type === "new_session" && data.session) updateDashboard(data.session);
+      if (data.type === "guardian_alerted") {
+        showGuardianBanner(data.user_id, data.score, data.threat_type);
+      }
+      if (data.type === "session_updated") {
+        const row = document.querySelector(`tr[data-session-id=\"${data.session_id}\"]`);
+        if (row) {
+          const typeCell = row.querySelector(".threat-type-cell");
+          if (typeCell) typeCell.textContent = data.threat_type || "";
+        }
+      }
+      if ((data.type === "initial_sessions" || data.type === "init") && Array.isArray(data.sessions)) {
+        data.sessions.slice().reverse().forEach(updateDashboard);
+      }
+    }
+
+    async function triggerDemoScam() {
+      const btn = document.getElementById("demoBtn");
+      btn.textContent = "⏳ Injecting...";
+      btn.disabled = true;
+      await fetch("/demo-phone-session", { method: "POST" }).catch(() => {});
+      setTimeout(() => {
+        btn.textContent = "⚡ DEMO SCAM";
+        btn.disabled = false;
+      }, 3000);
     }
 
     function randomSession() {
@@ -496,6 +551,7 @@
 
     function enableDemoMode() {
       if (state.demoTimer) return;
+      console.warn("[dashboard] backend unavailable -> demo fallback enabled");
       document.getElementById("wsStatus").textContent = "WS: DEMO MODE";
       document.getElementById("wsStatus").classList.remove("live");
       state.demoTimer = setInterval(() => updateDashboard(randomSession()), 3000);
@@ -505,12 +561,13 @@
       if (state.ws && state.ws.readyState === WebSocket.OPEN) return;
       if (state.ws && state.ws.readyState === WebSocket.CONNECTING) return;
       try {
-        const wsScheme = window.location.protocol === "https:" ? "wss" : "ws";
-        const wsHost = window.location.host || "localhost:8000";
-        const ws = new WebSocket(`${wsScheme}://${wsHost}/live`);
+        console.log("[dashboard] connecting websocket", LIVE_WS_URL);
+        const ws = new WebSocket(LIVE_WS_URL);
         state.ws = ws;
         ws.onopen = () => {
+          console.log("[dashboard] websocket connected");
           state.wsConnected = true;
+          reconnectDelay = 1000;
           if (state.reconnectTimer) {
             clearTimeout(state.reconnectTimer);
             state.reconnectTimer = null;
@@ -521,54 +578,37 @@
           el.classList.add("live");
         };
         ws.onmessage = (event) => {
+          console.log("[dashboard] websocket message", event.data);
           const data = JSON.parse(event.data);
-          if (data.type === "new_session" && data.session) updateDashboard(data.session);
-          if (data.type === "session_updated" && data.session) updateDashboard(data.session);
-          if ((data.type === "initial_sessions" || data.type === "init") && Array.isArray(data.sessions)) {
-            data.sessions.slice().reverse().forEach(updateDashboard);
-          }
+          handleMessage(data);
         };
-        ws.onerror = () => {
+        ws.onerror = (err) => {
+          console.error("[dashboard] websocket error", err);
           state.wsConnected = false;
           enableDemoMode();
         };
         ws.onclose = () => {
+          console.warn("[dashboard] websocket closed");
           state.wsConnected = false;
           enableDemoMode();
           if (!state.reconnectTimer) {
             state.reconnectTimer = setTimeout(() => {
               state.reconnectTimer = null;
+              reconnectDelay = Math.min(reconnectDelay * 2, 30000);
               startWs();
-            }, 3000);
+            }, reconnectDelay);
           }
         };
       } catch (e) {
+        console.error("[dashboard] websocket connect exception", e);
         enableDemoMode();
         if (!state.reconnectTimer) {
           state.reconnectTimer = setTimeout(() => {
             state.reconnectTimer = null;
+            reconnectDelay = Math.min(reconnectDelay * 2, 30000);
             startWs();
-          }, 3000);
+          }, reconnectDelay);
         }
-      }
-    }
-
-    function seedMapEvents() {
-      const weightedCities = [
-        ...Array(30).fill("bengaluru"),
-        ...Array(25).fill("mumbai"),
-        ...Array(20).fill("delhi"),
-        ...Array(25).fill(null)
-      ];
-      const other = Object.keys(CITIES).filter(c => !["bengaluru","mumbai","delhi"].includes(c));
-
-      for (let i = 0; i < 50; i++) {
-        setTimeout(() => {
-          const pick = weightedCities[Math.floor(Math.random()*weightedCities.length)] || other[Math.floor(Math.random()*other.length)];
-          const r = Math.random();
-          const label = r < 0.7 ? "HIGH_RISK" : r < 0.9 ? "SUSPICIOUS" : "SAFE";
-          addFraudEvent(pick, label, "SEED_EVENT", label === "HIGH_RISK" ? 92 : label === "SUSPICIOUS" ? 56 : 18);
-        }, i * 200);
       }
     }
 
@@ -611,7 +651,6 @@
       calcImpact();
     }
 
-    seedMapEvents();
     initImpact();
     startWs();
     setTimeout(() => { if (!state.wsConnected) enableDemoMode(); }, 1200);

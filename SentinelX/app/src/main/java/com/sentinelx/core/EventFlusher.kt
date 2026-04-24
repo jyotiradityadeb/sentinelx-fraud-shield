@@ -70,10 +70,13 @@ class EventFlusher(
 
     fun flushAndScore(sessionFeatures: SessionFeatures) {
         scope.launch {
+            Log.d("EventFlusher", "flushAndScore start backend=$backendUrl session=${sessionFeatures.sessionId}")
             flushEventsBatch()
 
             val payload = sessionFeatures.toPayload()
+            Log.d("EventFlusher", "Posting /score-session payload=${gson.toJson(payload)}")
             val scoreResp = postJson("$backendUrl/score-session", gson.toJson(payload)) ?: return@launch
+            Log.d("EventFlusher", "/score-session response=$scoreResp")
             val scoreJson = parseJson(scoreResp)
 
             val score = scoreJson?.get("score")?.asInt
@@ -94,6 +97,9 @@ class EventFlusher(
             }
 
             val explainResp = postJson("$backendUrl/explain", gson.toJson(explainRequest))
+            if (explainResp != null) {
+                Log.d("EventFlusher", "/explain response=$explainResp")
+            }
             val explainJson = explainResp?.let { parseJson(it) }
 
             val userPrompt = explainJson?.get("user_prompt")?.asString ?: "Suspicious behavior detected."
@@ -108,7 +114,7 @@ class EventFlusher(
                 status = "Risk $score/120 ($label)",
             )
             val callerTrust = payload.caller_trust.uppercase()
-            val shouldIntervene = callerTrust in setOf("UNKNOWN", "REPEATED_UNKNOWN", "SCAMMER_MARKED")
+            val shouldIntervene = callerTrust == "SCAMMER_MARKED"
             if (shouldIntervene) {
                 InterventionManager.show(
                     context = context,
@@ -124,6 +130,17 @@ class EventFlusher(
                         threatType = threatType,
                     )
                 }
+                val intent = android.content.Intent("com.sentinelx.SCORE_RESULT").apply {
+                    putExtra("score", score)
+                    putExtra("label", label)
+                    putExtra("callerPts", scoreJson?.get("sig_caller_trust")?.asInt ?: 0)
+                    putExtra("transitionPts", scoreJson?.get("sig_transition")?.asInt ?: 0)
+                    putExtra("confirmPts", scoreJson?.get("sig_confirm_press")?.asInt ?: 0)
+                    putExtra("behavioralPts", scoreJson?.get("sig_behavioral")?.asInt ?: 0)
+                    putExtra("voicePts", scoreJson?.get("sig_voice_stress")?.asInt ?: 0)
+                    putExtra("networkPts", scoreJson?.get("sig_network")?.asInt ?: 0)
+                }
+                context.sendBroadcast(intent)
             } else {
                 Log.d("SentinelX", "Intervention skipped for trusted callerTrust=$callerTrust")
             }
@@ -134,12 +151,18 @@ class EventFlusher(
         val events = SentinelAccessibilityService.getBufferSnapshot()
         if (events.isEmpty()) return
 
+        Log.d("EventFlusher", "Event batch queued size=${events.size} backend=$backendUrl")
         val batch = EventBatch(
             sessionId = events.lastOrNull()?.sessionId ?: UUID.randomUUID().toString(),
             userId = android.os.Build.ID,
             events = events,
         )
-        val success = postJson("$backendUrl/events", batch.toJson()) != null
+        Log.d("EventFlusher", "Posting /events with size=${events.size}")
+        val eventsResp = postJson("$backendUrl/events", batch.toJson())
+        if (eventsResp != null) {
+            Log.d("EventFlusher", "/events response=$eventsResp")
+        }
+        val success = eventsResp != null
         if (success) {
             SentinelAccessibilityService.clearBuffer()
             Log.d("SentinelX", "Flushed ${events.size} events")
@@ -163,6 +186,7 @@ class EventFlusher(
             client.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) {
                     Log.w("SentinelX", "POST failed ${response.code} for $url")
+                    Log.w("EventFlusher", "POST failed code=${response.code} url=$url")
                     null
                 } else {
                     response.body?.string()
@@ -170,6 +194,7 @@ class EventFlusher(
             }
         } catch (e: IOException) {
             Log.w("SentinelX", "POST exception for $url: ${e.message}")
+            Log.w("EventFlusher", "Network error url=$url message=${e.message}")
             null
         }
     }

@@ -1,89 +1,123 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#CC120707"
-    android:gravity="center"
-    android:orientation="vertical"
-    android:padding="24dp">
+    android:background="#EE050A14"
+    android:fillViewport="true">
 
-    <TextView
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="⛔"
-        android:textColor="#FF5252"
-        android:textSize="48sp" />
-
-    <TextView
-        android:id="@+id/overlayRiskTitle"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="12dp"
-        android:text="HIGH RISK"
-        android:textAllCaps="true"
-        android:textColor="#FF5252"
-        android:textSize="30sp"
-        android:textStyle="bold" />
-
-    <TextView
-        android:id="@+id/overlayRiskScore"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="6dp"
-        android:text="Score: 0/120"
-        android:textColor="#FFE082"
-        android:textSize="18sp"
-        android:textStyle="bold" />
-
-    <TextView
-        android:id="@+id/overlayRiskMessage"
+    <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginTop="16dp"
-        android:background="#401F2937"
-        android:padding="12dp"
-        android:text="Risk message"
-        android:textColor="#E3F2FD"
-        android:textSize="16sp" />
+        android:gravity="center_horizontal"
+        android:orientation="vertical"
+        android:padding="28dp">
 
-    <TextView
-        android:id="@+id/overlaySignalSummary"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="12dp"
-        android:text="Signal summary"
-        android:textColor="#B0BEC5"
-        android:textSize="14sp" />
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="⛔"
+            android:textSize="56sp" />
 
-    <TextView
-        android:id="@+id/overlayCountdown"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="10dp"
-        android:text="Guardian window: 02:00"
-        android:textColor="#FCA5A5"
-        android:textSize="14sp"
-        android:textStyle="bold" />
+        <TextView
+            android:id="@+id/overlayRiskTitle"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="14dp"
+            android:text="PAYMENT BLOCKED"
+            android:textAllCaps="true"
+            android:textColor="#FF5252"
+            android:textSize="28sp"
+            android:textStyle="bold" />
 
-    <Button
-        android:id="@+id/btnCancelPayment"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="20dp"
-        android:backgroundTint="#D32F2F"
-        android:text="CANCEL PAYMENT"
-        android:textColor="#FFFFFF"
-        android:textStyle="bold" />
+        <TextView
+            android:id="@+id/overlayRiskScore"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:background="#FF525230"
+            android:paddingStart="16dp"
+            android:paddingTop="6dp"
+            android:paddingEnd="16dp"
+            android:paddingBottom="6dp"
+            android:text="97 / 120  ·  HIGH RISK"
+            android:textColor="#FF5252"
+            android:textSize="15sp"
+            android:textStyle="bold" />
 
-    <TextView
-        android:id="@+id/btnOverrideRisk"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="14dp"
-        android:clickable="true"
-        android:focusable="true"
-        android:text="Override - I understand the risk"
-        android:textColor="#CFD8DC"
-        android:textSize="13sp" />
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:layout_marginTop="16dp"
+            android:layout_marginBottom="16dp"
+            android:background="#1F2937" />
 
-</LinearLayout>
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="4dp"
+            android:layout_marginEnd="4dp"
+            android:background="#111827"
+            android:orientation="vertical"
+            android:padding="14dp">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="SENTINELX ANALYSIS"
+                android:textAllCaps="true"
+                android:textColor="#6B7280"
+                android:textSize="9sp" />
+
+            <TextView
+                android:id="@+id/overlayRiskMessage"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:lineSpacingMultiplier="1.4"
+                android:text="Risk message"
+                android:textColor="#E5E7EB"
+                android:textSize="14sp" />
+        </LinearLayout>
+
+        <TextView
+            android:id="@+id/overlaySignalSummary"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            android:text="Signal summary"
+            android:textColor="#9CA3AF"
+            android:textSize="12sp" />
+
+        <TextView
+            android:id="@+id/overlayCountdown"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="Guardian window: 02:00"
+            android:textColor="#FCA5A5"
+            android:textSize="13sp"
+            android:textStyle="bold" />
+
+        <Button
+            android:id="@+id/btnCancelPayment"
+            android:layout_width="match_parent"
+            android:layout_height="52dp"
+            android:layout_marginTop="20dp"
+            android:backgroundTint="#DC2626"
+            android:text="CANCEL PAYMENT"
+            android:textColor="#FFFFFF"
+            android:textSize="15sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/btnOverrideRisk"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:clickable="true"
+            android:focusable="true"
+            android:text="Override — I understand the risk"
+            android:textColor="#6B7280"
+            android:textSize="12sp" />
+    </LinearLayout>
+</ScrollView>

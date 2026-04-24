@@ -205,5 +205,22 @@ data class SessionFeatures(
                 geoHash = geoHash,
             )
         }
+
+        fun fromDemo() = SessionFeatures(
+            sessionId = java.util.UUID.randomUUID().toString(),
+            userId = "demo_user",
+            secondsSinceCall = 18L,
+            switchCount20s = 5,
+            confirmDwellMs = 1100L,
+            tapDensity = 6.3f,
+            revisitCount = 3,
+            sessionDurationMs = 19000L,
+            callerTrust = CallerTrust.REPEATED_UNKNOWN,
+            isMessagingBeforePayment = true,
+            isWhatsAppVoip = true,
+            voiceStressScore = 0.87f,
+            networkThreatScore = 12,
+            geoHash = "tdr1j",
+        )
     }
 }
