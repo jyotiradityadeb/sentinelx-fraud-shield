@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#CC05070C"
+    android:gravity="center"
+    android:orientation="vertical"
+    android:padding="24dp">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="#111827"
+        android:orientation="vertical"
+        android:padding="18dp">
+
+        <TextView
+            android:id="@+id/alertTitle"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="SentinelX High Risk Alert"
+            android:textColor="#FCA5A5"
+            android:textSize="20sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/alertScore"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="Score: 0/120"
+            android:textColor="#E5E7EB"
+            android:textSize="16sp" />
+
+        <TextView
+            android:id="@+id/alertLabel"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:text="Risk: HIGH_RISK"
+            android:textColor="#FCD34D"
+            android:textSize="14sp" />
+
+        <TextView
+            android:id="@+id/alertMessage"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:text="Suspicious behavior detected. Please verify before payment."
+            android:textColor="#E5E7EB"
+            android:textSize="14sp" />
+
+        <TextView
+            android:id="@+id/alertSignals"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            android:text="Signals: -"
+            android:textColor="#9CA3AF"
+            android:textSize="12sp" />
+
+        <Button
+            android:id="@+id/btnAlertClose"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:text="I Will Verify First" />
+    </LinearLayout>
+</LinearLayout>
+

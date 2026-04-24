@@ -21,10 +21,6 @@ SUPABASE_KEY: str = _get_required_env("SUPABASE_KEY")
 OPENAI_KEY: str = _get_required_env("OPENAI_KEY")
 HMAC_SECRET: str = _get_required_env("HMAC_SECRET")
 
-TWILIO_SID: str = os.getenv("TWILIO_SID", "").strip()
-TWILIO_TOKEN: str = os.getenv("TWILIO_TOKEN", "").strip()
-TWILIO_FROM: str = os.getenv("TWILIO_FROM", "").strip()
-
 PORT: int = int(os.getenv("PORT", "8000"))
 DEBUG: bool = os.getenv("DEBUG", "true").strip().lower() in {"1", "true", "yes", "on"}
 

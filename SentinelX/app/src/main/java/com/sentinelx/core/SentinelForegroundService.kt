@@ -44,10 +44,11 @@ class SentinelForegroundService : Service() {
         } else {
             "Accessibility is OFF. Tap Enable to restore protection."
         }
+        lastStatusText = contentText
         val notification = NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_lock_idle_alarm)
             .setContentTitle("SentinelX Active")
-            .setContentText(contentText)
+            .setContentText(lastStatusText)
             .setContentIntent(openAppPendingIntent)
             .addAction(0, "Enable Accessibility", openA11yPendingIntent)
             .setOngoing(true)
@@ -130,6 +131,8 @@ class SentinelForegroundService : Service() {
         const val STOP_ACTION = "com.sentinelx.action.STOP"
         private const val CHANNEL_ID = "sentinelx_protection"
         private const val NOTIFICATION_ID = 101
+        @Volatile
+        private var lastStatusText: String = "Protecting your payments in real time"
 
         fun start(context: Context) {
             val intent = Intent(context, SentinelForegroundService::class.java).apply {
@@ -147,6 +150,36 @@ class SentinelForegroundService : Service() {
                 action = STOP_ACTION
             }
             context.startService(intent)
+        }
+
+        fun updateLiveStatus(context: Context, status: String) {
+            lastStatusText = status
+            val appContext = context.applicationContext
+            val openAppIntent = Intent(appContext, MainActivity::class.java)
+            val openAppPendingIntent = PendingIntent.getActivity(
+                appContext,
+                2001,
+                openAppIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+            )
+            val openA11yIntent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
+            val openA11yPendingIntent = PendingIntent.getActivity(
+                appContext,
+                2002,
+                openA11yIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+            )
+            val notification = NotificationCompat.Builder(appContext, CHANNEL_ID)
+                .setSmallIcon(android.R.drawable.ic_lock_idle_alarm)
+                .setContentTitle("SentinelX Active")
+                .setContentText(lastStatusText)
+                .setContentIntent(openAppPendingIntent)
+                .addAction(0, "Enable Accessibility", openA11yPendingIntent)
+                .setOngoing(true)
+                .setSilent(true)
+                .build()
+            val manager = appContext.getSystemService(NotificationManager::class.java)
+            manager.notify(NOTIFICATION_ID, notification)
         }
     }
 }

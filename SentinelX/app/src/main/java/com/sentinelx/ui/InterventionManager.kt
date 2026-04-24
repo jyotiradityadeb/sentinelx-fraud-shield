@@ -23,6 +23,7 @@ object InterventionManager {
     private const val CHANNEL_ID = "sentinelx_alerts"
     private const val NOTIFICATION_ID = 2201
     private const val OVERLAY_AUTO_DISMISS_MS = 60_000L
+    private const val GUARDIAN_WINDOW_MS = 120_000L
 
     @Volatile
     private var currentOverlay: View? = null
@@ -113,6 +114,8 @@ object InterventionManager {
         overlay.findViewById<TextView>(R.id.overlayRiskMessage).text = prompt
         overlay.findViewById<TextView>(R.id.overlaySignalSummary).text =
             if (signals.isEmpty()) "Signal summary unavailable." else signals.joinToString(" | ")
+        val countdownText = overlay.findViewById<TextView>(R.id.overlayCountdown)
+        startCountdown(countdownText)
 
         overlay.findViewById<View>(R.id.btnCancelPayment).setOnClickListener {
             vibrate(appContext, longArrayOf(0L, 200L))
@@ -147,6 +150,13 @@ object InterventionManager {
             handler.postDelayed({ dismissCurrentOverlay() }, OVERLAY_AUTO_DISMISS_MS)
         }.onFailure {
             Log.w("SentinelX", "Overlay show failed: ${it.message}")
+            AlertActivity.start(
+                context = appContext,
+                score = score,
+                label = if (critical) "HIGH_RISK" else "SUSPICIOUS",
+                prompt = prompt,
+                signals = if (signals.isEmpty()) "-" else signals.joinToString(" | "),
+            )
             showTier1(appContext, score)
         }
     }
@@ -171,5 +181,23 @@ object InterventionManager {
             @Suppress("DEPRECATION")
             vibrator.vibrate(pattern, -1)
         }
+    }
+
+    private fun startCountdown(countdownView: TextView) {
+        val startTs = System.currentTimeMillis()
+        val ticker = object : Runnable {
+            override fun run() {
+                val elapsed = System.currentTimeMillis() - startTs
+                val remaining = (GUARDIAN_WINDOW_MS - elapsed).coerceAtLeast(0L)
+                val sec = (remaining / 1000L).toInt()
+                val mm = sec / 60
+                val ss = sec % 60
+                countdownView.text = "Guardian window: %02d:%02d".format(mm, ss)
+                if (remaining > 0L && currentOverlay != null) {
+                    handler.postDelayed(this, 1000L)
+                }
+            }
+        }
+        handler.post(ticker)
     }
 }

@@ -7,7 +7,6 @@ import com.google.gson.JsonObject
 import com.google.gson.JsonParser
 import com.sentinelx.data.EventBatch
 import com.sentinelx.data.SessionFeatures
-import com.sentinelx.network.GuardianNotifier
 import com.sentinelx.ui.InterventionManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -43,14 +42,16 @@ data class SessionFeaturesPayload(
 
 class EventFlusher(
     private val context: Context,
-    private val backendUrl: String = "http://127.0.0.1:8000",
 ) {
+    private val backendUrl: String
+        get() = BackendConfig.getBackendUrl(context)
+
     private val gson = Gson()
     private val client = OkHttpClient()
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private val jsonMediaType = "application/json; charset=utf-8".toMediaType()
     private var periodicJob: Job? = null
-    private val guardianNotifier = GuardianNotifier(backendUrl)
+    private val guardianManager = GuardianManager(context)
 
     fun startFlushing() {
         if (periodicJob?.isActive == true) return
@@ -97,12 +98,15 @@ class EventFlusher(
 
             val userPrompt = explainJson?.get("user_prompt")?.asString ?: "Suspicious behavior detected."
             val guardianMessage = explainJson?.get("guardian_message")?.asString ?: "Please contact immediately."
-            val dashboardSummary = explainJson?.get("dashboard_summary")?.asString ?: "Session scored."
             val threatType = explainJson?.get("threat_type")?.asString ?: "UNKNOWN"
 
             val signalList = runCatching {
                 triggeredSignals?.asJsonArray?.mapNotNull { it.toString() } ?: emptyList()
             }.getOrDefault(emptyList())
+            SentinelForegroundService.updateLiveStatus(
+                context = context,
+                status = "Risk $score/120 ($label)",
+            )
             InterventionManager.show(
                 context = context,
                 score = score,
@@ -111,11 +115,9 @@ class EventFlusher(
                 signals = signalList,
             )
             if (label.equals("HIGH_RISK", ignoreCase = true)) {
-                guardianNotifier.send(
-                    context = context,
-                    userId = payload.user_id,
-                    guardianMessage = guardianMessage,
+                guardianManager.alertGuardian(
                     score = score,
+                    llmSummary = guardianMessage,
                     threatType = threatType,
                 )
             }
@@ -135,8 +137,16 @@ class EventFlusher(
         if (success) {
             SentinelAccessibilityService.clearBuffer()
             Log.d("SentinelX", "Flushed ${events.size} events")
+            SentinelForegroundService.updateLiveStatus(
+                context = context,
+                status = "Live: flushed ${events.size} events",
+            )
         } else {
             Log.d("SentinelX", "Failed to flush events; buffer retained (${events.size})")
+            SentinelForegroundService.updateLiveStatus(
+                context = context,
+                status = "Network issue: events buffered (${events.size})",
+            )
         }
     }
 

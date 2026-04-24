@@ -47,6 +47,14 @@ CREATE TABLE IF NOT EXISTS threat_network (
   avg_score     float       DEFAULT 0.0
 );
 
+CREATE TABLE IF NOT EXISTS guardians (
+  id         uuid        DEFAULT gen_random_uuid() PRIMARY KEY,
+  user_id    text        NOT NULL,
+  name       text        NOT NULL DEFAULT 'Guardian',
+  phone      text        NOT NULL,
+  created_at timestamptz DEFAULT now() NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS user_baselines (
   user_id             text    PRIMARY KEY,
   updated_at          timestamptz DEFAULT now(),
@@ -64,6 +72,7 @@ CREATE INDEX IF NOT EXISTS idx_sessions_label ON sessions(label);
 CREATE INDEX IF NOT EXISTS idx_events_session ON events(session_id);
 CREATE INDEX IF NOT EXISTS idx_events_ts ON events(ts DESC);
 CREATE INDEX IF NOT EXISTS idx_threat_hash ON threat_network(number_hash);
+CREATE INDEX IF NOT EXISTS idx_guardians_user ON guardians(user_id);
 
 ALTER TABLE sessions REPLICA IDENTITY FULL;
 

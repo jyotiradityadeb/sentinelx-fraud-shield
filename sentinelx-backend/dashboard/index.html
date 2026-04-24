@@ -260,6 +260,8 @@
       mapCounters: { HIGH_RISK: 0, SUSPICIOUS: 0, SAFE: 0 },
       wsConnected: false,
       demoTimer: null,
+      reconnectTimer: null,
+      ws: null,
       networkReports: 0,
       falsePositives: 0,
       savedRupees: 0,
@@ -355,6 +357,7 @@
     function normalizeSession(raw) {
       const r = raw || {};
       return {
+        id: r.id || null,
         score: Number(r.score ?? r.total_score ?? 0),
         label: String(r.label || "SAFE"),
         threat_type: String(r.threat_type || "BEHAVIORAL_ANOMALY"),
@@ -451,7 +454,12 @@
 
     function updateDashboard(rawSession) {
       const s = normalizeSession(rawSession);
-      state.sessions.unshift(s);
+      const existingIdx = state.sessions.findIndex((x) => x.id && s.id && x.id === s.id);
+      if (existingIdx >= 0) {
+        state.sessions[existingIdx] = { ...state.sessions[existingIdx], ...s };
+      } else {
+        state.sessions.unshift(s);
+      }
       if (state.sessions.length > 200) state.sessions.length = 200;
 
       updateKpis();
@@ -494,10 +502,19 @@
     }
 
     function startWs() {
+      if (state.ws && state.ws.readyState === WebSocket.OPEN) return;
+      if (state.ws && state.ws.readyState === WebSocket.CONNECTING) return;
       try {
-        const ws = new WebSocket("ws://localhost:8000/live");
+        const wsScheme = window.location.protocol === "https:" ? "wss" : "ws";
+        const wsHost = window.location.host || "localhost:8000";
+        const ws = new WebSocket(`${wsScheme}://${wsHost}/live`);
+        state.ws = ws;
         ws.onopen = () => {
           state.wsConnected = true;
+          if (state.reconnectTimer) {
+            clearTimeout(state.reconnectTimer);
+            state.reconnectTimer = null;
+          }
           if (state.demoTimer) { clearInterval(state.demoTimer); state.demoTimer = null; }
           const el = document.getElementById("wsStatus");
           el.textContent = "WS: LIVE";
@@ -506,14 +523,33 @@
         ws.onmessage = (event) => {
           const data = JSON.parse(event.data);
           if (data.type === "new_session" && data.session) updateDashboard(data.session);
+          if (data.type === "session_updated" && data.session) updateDashboard(data.session);
           if ((data.type === "initial_sessions" || data.type === "init") && Array.isArray(data.sessions)) {
             data.sessions.slice().reverse().forEach(updateDashboard);
           }
         };
-        ws.onerror = () => enableDemoMode();
-        ws.onclose = () => enableDemoMode();
+        ws.onerror = () => {
+          state.wsConnected = false;
+          enableDemoMode();
+        };
+        ws.onclose = () => {
+          state.wsConnected = false;
+          enableDemoMode();
+          if (!state.reconnectTimer) {
+            state.reconnectTimer = setTimeout(() => {
+              state.reconnectTimer = null;
+              startWs();
+            }, 3000);
+          }
+        };
       } catch (e) {
         enableDemoMode();
+        if (!state.reconnectTimer) {
+          state.reconnectTimer = setTimeout(() => {
+            state.reconnectTimer = null;
+            startWs();
+          }, 3000);
+        }
       }
     }
 

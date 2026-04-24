@@ -281,7 +281,10 @@ async def explain(payload: dict):
             "threat_type": explanation.get("threat_type", "BEHAVIORAL_ANOMALY"),
         }
         try:
-            db.table("sessions").update(update_doc).eq("id", session_id).execute()
+            updated = db.table("sessions").update(update_doc).eq("id", session_id).execute()
+            updated_rows = updated.data or []
+            if updated_rows:
+                await manager.broadcast({"type": "session_updated", "session": updated_rows[0]})
         except Exception as exc:
             print(f"/explain update warning: {exc}")
 
@@ -350,59 +353,61 @@ async def threat_stats():
 
 @app.post("/notify-guardian")
 async def notify_guardian(payload: GuardianNotify):
-    try:
-        guardian_resp = db.table("guardians").select("name,phone").eq("user_id", payload.user_id).limit(1).execute()
-        guardians = guardian_resp.data or []
-    except Exception as exc:
-        return {"status": "no_guardian", "detail": f"Guardian lookup failed: {exc}"}
-
-    if not guardians:
-        return {"status": "no_guardian"}
-
-    guardian = guardians[0]
-    guardian_phone = str(guardian.get("phone", "")).strip()
-    guardian_name = str(guardian.get("name", "Guardian")).strip() or "Guardian"
-    if not guardian_phone:
-        return {"status": "no_guardian"}
-
-    message = (
-        f"SentinelX Alert: {payload.user_id}'s payment has been paused.\n\n"
-        f"Reason: {payload.llm_summary}\n"
-        f"Risk Score: {payload.score}/120 - {payload.threat_type}\n\n"
-        "Please call them immediately to verify."
-    )
-
-    try:
-        from twilio.rest import Client
-
-        if not (config.TWILIO_SID and config.TWILIO_TOKEN and config.TWILIO_FROM):
-            return {"status": "twilio_error", "detail": "Twilio credentials not configured"}
-
-        client = Client(config.TWILIO_SID, config.TWILIO_TOKEN)
-        normalized_phone = "".join(ch for ch in guardian_phone if ch.isdigit())
-        if normalized_phone.startswith("91") and len(normalized_phone) == 12:
-            whatsapp_to = f"whatsapp:+{normalized_phone}"
-        else:
-            whatsapp_to = f"whatsapp:+91{normalized_phone}"
-
-        client.messages.create(
-            body=message,
-            from_="whatsapp:" + config.TWILIO_FROM,
-            to=whatsapp_to,
-        )
-    except Exception as exc:
-        print(f"notify-guardian twilio error: {exc}")
-        return {"status": "twilio_error", "detail": str(exc)}
-
+    alert_doc = {
+        "user_id": payload.user_id,
+        "score": payload.score,
+        "threat_type": payload.threat_type,
+        "llm_summary": payload.llm_summary,
+        "status": "android_native_guardian_flow",
+    }
+    await manager.broadcast({"type": "guardian_alert_requested", "payload": alert_doc})
     try:
         db.table("sessions").update({"guardian_alerted": True}).eq("user_id", payload.user_id).execute()
     except Exception:
-        try:
-            db.table("sessions").update({"guardian_sms_sent": True}).eq("user_id", payload.user_id).execute()
-        except Exception:
-            pass
+        pass
+    return {"status": "queued_for_device", "detail": "Use Android native SMS/WhatsApp guardian flow."}
 
-    return {"status": "sent", "guardian": guardian_name}
+
+@app.get("/demo-inject")
+async def demo_inject():
+    payload = {
+        "user_id": "demo_inject_user",
+        "seconds_since_call": 14,
+        "switch_count_20s": 5,
+        "confirm_dwell_ms": 1100,
+        "tap_density": 6.2,
+        "revisit_count": 2,
+        "session_duration_ms": 17000,
+        "caller_trust": "UNKNOWN",
+        "is_messaging_before": True,
+        "is_whatsapp_voip": True,
+        "voice_stress_score": 0.79,
+        "network_threat_score": 10,
+        "geo_hash": "tdr1j",
+    }
+    result = _score_payload(payload)
+    row = {
+        "user_id": payload["user_id"],
+        "score": result["score"],
+        "label": result["label"],
+        "threat_type": "UPI_SCAM",
+        "caller_trust": payload["caller_trust"],
+        "geo_hash": payload["geo_hash"],
+        "triggered_signals": result["triggered_signals"],
+        "sig_caller_trust": result["sig_caller_trust"],
+        "sig_transition": result["sig_transition"],
+        "sig_confirm_press": result["sig_confirm_press"],
+        "sig_behavioral": result["sig_behavioral"],
+        "sig_voice_stress": result["sig_voice_stress"],
+        "sig_network": result["sig_network"],
+        "llm_summary": "Demo inject event for live dashboard validation.",
+        "llm_user_prompt": "Pause and verify this transaction before proceeding.",
+    }
+    inserted = db.table("sessions").insert(row).execute()
+    rows = inserted.data or []
+    session = rows[0] if rows else row
+    await manager.broadcast({"type": "new_session", "session": session})
+    return {"status": "ok", "session": session}
 
 
 # Demo-only judge backup endpoints.

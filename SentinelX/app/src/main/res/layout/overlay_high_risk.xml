@@ -55,6 +55,16 @@
         android:textColor="#B0BEC5"
         android:textSize="14sp" />
 
+    <TextView
+        android:id="@+id/overlayCountdown"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="10dp"
+        android:text="Guardian window: 02:00"
+        android:textColor="#FCA5A5"
+        android:textSize="14sp"
+        android:textStyle="bold" />
+
     <Button
         android:id="@+id/btnCancelPayment"
         android:layout_width="match_parent"
