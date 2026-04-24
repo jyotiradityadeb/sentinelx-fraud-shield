@@ -1,4 +1,4 @@
-package com.sentinelx.core
+﻿package com.sentinelx.core
 
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -28,6 +28,10 @@ class SentinelForegroundService : Service() {
     private lateinit var voiceStressAnalyzer: VoiceStressAnalyzer
     private lateinit var eventFlusher: EventFlusher
     private lateinit var callerTrustClassifier: CallerTrustClassifier
+    @Volatile
+    private var lastRingAlertNumber: String? = null
+    @Volatile
+    private var lastRingAlertTs: Long = 0L
 
     private val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
 
@@ -65,15 +69,7 @@ class SentinelForegroundService : Service() {
             .setSilent(true)
             .build()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                startForeground(
-                    NOTIFICATION_ID,
-                    notification,
-                    ServiceInfo.FOREGROUND_SERVICE_TYPE_PHONE_CALL or ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC,
-                )
-            } else {
-                startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
-            }
+            startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
         } else {
             startForeground(NOTIFICATION_ID, notification)
         }
@@ -97,37 +93,61 @@ class SentinelForegroundService : Service() {
                     voiceStressAnalyzer.stopAnalyzing()
                 }
                 if (state == TelephonyManager.CALL_STATE_RINGING) {
-                    // On API 31+ the number is not delivered in the callback, poll call log
-                    scope.launch {
-                        delay(300L)
-                        var number: String? = null
-                        repeat(6) {
-                            if (number.isNullOrBlank()) {
-                                number = callStateMonitor.getRecentCallInfo(maxAgeSeconds = 5L)?.number
-                                    ?: callStateMonitor.lastCallerNumber
-                                if (number.isNullOrBlank()) delay(500L)
+                    // Strict rule: alert only when current incoming number is in blocklist.
+                    // No call-log inference here (prevents stale-number false positives).
+                    val incomingNumber = callStateMonitor.getFreshRingingNumber()
+                    if (incomingNumber.isNullOrBlank()) {
+                        // Fallback: only accept incoming number that appears in call log during this ring window.
+                        val ringStartTs = callStateMonitor.currentRingStartTs.takeIf { it > 0L } ?: System.currentTimeMillis()
+                        scope.launch {
+                            repeat(12) {
+                                if (callStateMonitor.currentCallState != TelephonyManager.CALL_STATE_RINGING) return@launch
+                                val inferred = callStateMonitor
+                                    .getRecentIncomingCallInfo(sinceTs = ringStartTs - 1000L, maxAgeSeconds = 12L)
+                                    ?.number
+                                if (!inferred.isNullOrBlank()) {
+                                    maybeShowBlockedRingAlert(inferred)
+                                    return@launch
+                                }
+                                delay(250L)
                             }
+                            Log.d("SentinelX", "RINGING number unavailable; skipping ring alert")
                         }
-                        if (number.isNullOrBlank()) return@launch
-                        val trustLabels = callerTrustClassifier.classify(number!!)
-                        if (trustLabels.contains(CallerTrustClassifier.CallerTrust.SCAMMER_MARKED)) {
-                            Log.d("SentinelX", "BLOCKED NUMBER calling: $number — alerting during ring")
-                            InterventionManager.show(
-                                context = applicationContext,
-                                score = 95,
-                                label = "HIGH_RISK",
-                                llmUserPrompt = "⚠️ INCOMING CALL FROM BLOCKED NUMBER: $number\n\nThis number is on your scammer blocklist. Do NOT answer.",
-                                signals = listOf("Number is in your personal blocklist", "Blocked caller alert"),
-                            )
-                            updateLiveStatus(applicationContext, "🚨 BLOCKED NUMBER CALLING: $number")
-                        }
+                        return@CallStateMonitor
                     }
+                    maybeShowBlockedRingAlert(incomingNumber)
                 }
             },
         )
 
         callStateMonitor.startMonitoring()
         eventFlusher.startFlushing()
+    }
+
+    private fun maybeShowBlockedRingAlert(incomingNumber: String) {
+        val normalized = incomingNumber.filter { it.isDigit() }.takeLast(10)
+        if (normalized.isBlank()) return
+        val now = System.currentTimeMillis()
+        if (lastRingAlertNumber == normalized && now - lastRingAlertTs < 15_000L) {
+            return
+        }
+
+        val trustLabels = callerTrustClassifier.classify(incomingNumber)
+        if (trustLabels.contains(CallerTrustClassifier.CallerTrust.SCAMMER_MARKED)) {
+            lastRingAlertNumber = normalized
+            lastRingAlertTs = now
+            Log.d("SentinelX", "Blocked number ringing: $incomingNumber")
+            InterventionManager.show(
+                context = applicationContext,
+                score = 95,
+                label = "HIGH_RISK",
+                llmUserPrompt = "INCOMING CALL FROM BLOCKED NUMBER: $incomingNumber\n\nThis number is on your scammer blocklist. Do NOT answer.",
+                signals = listOf("Number is in your personal blocklist", "Blocked caller alert"),
+            )
+            updateLiveStatus(applicationContext, "Blocked number calling: $incomingNumber")
+        } else {
+            Log.d("SentinelX", "RINGING caller is not blocked: $incomingNumber")
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {

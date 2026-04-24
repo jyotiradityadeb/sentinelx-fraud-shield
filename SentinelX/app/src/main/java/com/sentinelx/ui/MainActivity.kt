@@ -96,7 +96,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         binding.btnDemoMode.setOnClickListener {
-            toggleDemoMode()
+            togglePresentationMode()
         }
 
         binding.btnSimulateScam.setOnClickListener {
@@ -125,11 +125,32 @@ class MainActivity : AppCompatActivity() {
             )
             val features = SessionFeatures.fromDemo()
             EventFlusher(applicationContext).flushAndScore(features)
-            appendEvent("Demo scam simulation sent")
+            appendEvent("Presentation high-risk simulation sent")
             Handler(Looper.getMainLooper()).postDelayed({
                 binding.btnSimulateScam.isEnabled = true
                 binding.btnSimulateScam.text = "TRIGGER HIGH RISK"
             }, 5000)
+        }
+        binding.btnSimulateSafe.setOnClickListener {
+            binding.btnSimulateSafe.isEnabled = false
+            binding.btnSimulateSafe.text = "Simulating..."
+            updateSignalDisplay(
+                callerPts = 0,
+                transitionPts = 0,
+                confirmPts = 2,
+                behavioralPts = 1,
+                voicePts = 0,
+                networkPts = 0,
+                total = 3,
+                label = "SAFE",
+            )
+            val features = SessionFeatures.fromSafeDemo()
+            EventFlusher(applicationContext).flushAndScore(features)
+            appendEvent("Presentation safe simulation sent")
+            Handler(Looper.getMainLooper()).postDelayed({
+                binding.btnSimulateSafe.isEnabled = true
+                binding.btnSimulateSafe.text = "TRIGGER SAFE"
+            }, 3000)
         }
 
         SentinelForegroundService.start(this)
@@ -169,7 +190,7 @@ class MainActivity : AppCompatActivity() {
         requestMissingRuntimePermissions()
         updatePermissionDots()
         updateGuardianStatus()
-        syncSafeModeButton()  // also calls syncDemoModeButton()
+        syncSafeModeButton()  // also calls syncPresentationModeButton()
         updateBlocklistCount()
         updateStats()
     }
@@ -229,15 +250,15 @@ class MainActivity : AppCompatActivity() {
         binding.riskLabelText.setTextColor(riskColor)
 
         if (clamped >= 80) {
-            binding.statusPill.text = "● HIGH ALERT"
+            binding.statusPill.text = "HIGH ALERT"
             binding.statusPill.setTextColor(Color.parseColor("#FCA5A5"))
             binding.statusPill.setBackgroundResource(com.sentinelx.R.drawable.bg_status_pill_red)
         } else if (clamped >= 40) {
-            binding.statusPill.text = "● WATCH"
+            binding.statusPill.text = "WATCH"
             binding.statusPill.setTextColor(Color.parseColor("#FCD34D"))
             binding.statusPill.setBackgroundResource(com.sentinelx.R.drawable.bg_status_pill_amber)
         } else {
-            binding.statusPill.text = "● PROTECTED"
+            binding.statusPill.text = "PROTECTED"
             binding.statusPill.setTextColor(Color.parseColor("#4ADE80"))
             binding.statusPill.setBackgroundResource(com.sentinelx.R.drawable.bg_status_pill_green)
         }
@@ -345,23 +366,27 @@ class MainActivity : AppCompatActivity() {
         if (binding.btnSimulateScam.text.isBlank() || binding.btnSimulateScam.text.contains("SIMULATE", ignoreCase = true)) {
             binding.btnSimulateScam.text = "TRIGGER HIGH RISK"
         }
-        syncDemoModeButton()
+        syncPresentationModeButton()
     }
 
-    private fun toggleDemoMode() {
+    private fun togglePresentationMode() {
         val prefs = getSharedPreferences("sentinelx_prefs", Context.MODE_PRIVATE)
-        val next = !prefs.getBoolean("demo_mode_enabled", false)
-        prefs.edit().putBoolean("demo_mode_enabled", next).apply()
-        syncDemoModeButton()
-        val msg = if (next) "Demo Mode ON — backend calls intercepted with fake responses" else "Demo Mode OFF"
+        val current = prefs.getBoolean("presentation_mode_enabled", prefs.getBoolean("demo_mode_enabled", false))
+        val next = !current
+        prefs.edit()
+            .putBoolean("presentation_mode_enabled", next)
+            .putBoolean("demo_mode_enabled", next)
+            .apply()
+        syncPresentationModeButton()
+        val msg = if (next) "Presentation Mode ON - deterministic buttons + real backend" else "Presentation Mode OFF"
         Snackbar.make(binding.root, msg, Snackbar.LENGTH_LONG).show()
-        appendEvent("Demo mode ${if (next) "enabled" else "disabled"}")
+        appendEvent("Presentation mode ${if (next) "enabled" else "disabled"}")
     }
 
-    private fun syncDemoModeButton() {
-        val on = getSharedPreferences("sentinelx_prefs", Context.MODE_PRIVATE)
-            .getBoolean("demo_mode_enabled", false)
-        binding.btnDemoMode.text = if (on) "Demo Mode: ON" else "Demo Mode: OFF"
+    private fun syncPresentationModeButton() {
+        val prefs = getSharedPreferences("sentinelx_prefs", Context.MODE_PRIVATE)
+        val on = prefs.getBoolean("presentation_mode_enabled", prefs.getBoolean("demo_mode_enabled", false))
+        binding.btnDemoMode.text = if (on) "Presentation Mode: ON" else "Presentation Mode: OFF"
         binding.btnDemoMode.setBackgroundResource(
             if (on) com.sentinelx.R.drawable.bg_button_dark_toggle_on
             else com.sentinelx.R.drawable.bg_button_outline_gray,
@@ -420,3 +445,4 @@ class MainActivity : AppCompatActivity() {
         }
     }
 }
+

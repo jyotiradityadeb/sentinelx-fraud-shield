@@ -274,17 +274,10 @@
     };
     let reconnectDelay = 1000;
 
-    const CITIES = {
-      bengaluru: [12.9716, 77.5946],
-      mumbai: [19.0760, 72.8777],
-      delhi: [28.6139, 77.2090],
-      hyderabad: [17.3850, 78.4867],
-      chennai: [13.0827, 80.2707],
-      kolkata: [22.5726, 88.3639],
-      pune: [18.5204, 73.8567],
-      ahmedabad: [23.0225, 72.5714],
-      jaipur: [26.9124, 75.7873],
-      lucknow: [26.8467, 80.9462]
+    const INDIA_CENTER = [20.5937, 78.9629];
+    const GEOHASH_BASE32 = "0123456789bcdefghjkmnpqrstuvwxyz";
+    const GEOHASH_FALLBACKS = {
+      tdr1j: [12.9716, 77.5946], // Bengaluru fallback
     };
 
     const riskCtx = document.getElementById("riskChart");
@@ -318,7 +311,7 @@
       options: { animation: false, scales: { r: { min: 0, max: 100, angleLines: { color: "#1e293b" }, grid: { color: "#1e293b" }, pointLabels: { color: "#94a3b8" } } } }
     });
 
-    const map = L.map("fraud-map", { zoomControl: false }).setView([20.5937, 78.9629], 5);
+    const map = L.map("fraud-map", { zoomControl: false }).setView(INDIA_CENTER, 5);
     L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19 }).addTo(map);
 
     function labelClass(label) {
@@ -328,11 +321,48 @@
       return "safe";
     }
 
-    function addFraudEvent(city, riskLevel, threatType, score) {
-      const key = (city && CITIES[city]) ? city : "bengaluru";
-      const coords = CITIES[key];
-      const label = String(riskLevel || "SAFE").toUpperCase();
+    function decodeGeohash(geohash) {
+      if (!geohash || typeof geohash !== "string") return null;
+      let evenBit = true;
+      let latMin = -90.0;
+      let latMax = 90.0;
+      let lonMin = -180.0;
+      let lonMax = 180.0;
+      for (const ch of geohash.toLowerCase()) {
+        const idx = GEOHASH_BASE32.indexOf(ch);
+        if (idx < 0) return null;
+        for (let mask = 16; mask > 0; mask >>= 1) {
+          const bit = (idx & mask) !== 0;
+          if (evenBit) {
+            const mid = (lonMin + lonMax) / 2;
+            if (bit) lonMin = mid; else lonMax = mid;
+          } else {
+            const mid = (latMin + latMax) / 2;
+            if (bit) latMin = mid; else latMax = mid;
+          }
+          evenBit = !evenBit;
+        }
+      }
+      return [(latMin + latMax) / 2, (lonMin + lonMax) / 2];
+    }
+
+    function extractCoords(session) {
+      const lat = Number(session.latitude);
+      const lon = Number(session.longitude);
+      if (Number.isFinite(lat) && Number.isFinite(lon)) return [lat, lon];
+      const fromHash = decodeGeohash(session.geo_hash);
+      if (fromHash) return fromHash;
+      if (session.geo_hash && GEOHASH_FALLBACKS[session.geo_hash]) return GEOHASH_FALLBACKS[session.geo_hash];
+      return INDIA_CENTER;
+    }
+
+    function addFraudEvent(session) {
+      const coords = extractCoords(session);
+      const label = String(session.label || "SAFE").toUpperCase();
       const color = label === "HIGH_RISK" ? "#ef4444" : (label === "SUSPICIOUS" ? "#f59e0b" : "#22c55e");
+      const [lat, lng] = coords;
+      const jitter = 0.02;
+      const point = [lat + ((Math.random() - 0.5) * jitter), lng + ((Math.random() - 0.5) * jitter)];
 
       const icon = L.divIcon({
         className: "",
@@ -340,25 +370,25 @@
         iconSize: [14,14]
       });
 
-      const marker = L.marker(coords, { icon }).addTo(map);
-      marker.bindPopup(`${key} - ${threatType || "UNKNOWN"} - Score: ${score || 0}`).openPopup();
+      const marker = L.marker(point, { icon }).addTo(map);
+      L.circle(point, {
+        radius: label === "HIGH_RISK" ? 10000 : (label === "SUSPICIOUS" ? 7000 : 4500),
+        color,
+        fillColor: color,
+        fillOpacity: 0.14,
+        weight: 1,
+      }).addTo(map);
+      marker.bindPopup(
+        `User: ${session.user_id}<br>` +
+        `Risk: ${label} (${session.score}/120)<br>` +
+        `Threat: ${session.threat_type || "UNKNOWN"}<br>` +
+        `Geo: ${session.geo_hash || "N/A"}`
+      ).openPopup();
       setTimeout(() => { try { marker.closePopup(); } catch (e) {} }, 5000);
 
       state.mapCounters[label] = (state.mapCounters[label] || 0) + 1;
       document.getElementById("mapLegend").innerHTML =
-        `🔴 High Risk: ${state.mapCounters.HIGH_RISK}<br>🟡 Suspicious: ${state.mapCounters.SUSPICIOUS}<br>🟢 Safe: ${state.mapCounters.SAFE}`;
-    }
-
-    function geohashToCity(geoHash) {
-      if (!geoHash || geoHash === "tdr1j") return "bengaluru";
-      const keys = Object.keys(CITIES);
-      return keys[Math.abs(hashCode(String(geoHash))) % keys.length];
-    }
-
-    function hashCode(s) {
-      let h = 0;
-      for (let i = 0; i < s.length; i++) h = Math.imul(31, h) + s.charCodeAt(i) | 0;
-      return h;
+        `🔴 High Risk: ${state.mapCounters.HIGH_RISK}<br>🟡 Suspicious: ${state.mapCounters.SUSPICIOUS}<br>🟢 Safe: ${state.mapCounters.SAFE}<br>📍 Last: ${point[0].toFixed(3)}, ${point[1].toFixed(3)}`;
     }
 
     function normalizeSession(raw) {
@@ -378,6 +408,8 @@
         user_id: String(r.user_id || "unknown_user"),
         caller_trust: caller,
         geo_hash: String(r.geo_hash || "tdr1j"),
+        latitude: Number(r.latitude ?? r.lat ?? Number.NaN),
+        longitude: Number(r.longitude ?? r.lng ?? Number.NaN),
         sig_caller_trust: Number(r.sig_caller_trust || 0),
         sig_transition: Number(r.sig_transition || 0),
         sig_confirm_press: Number(r.sig_confirm_press || 0),
@@ -484,8 +516,7 @@
       updateLlmPanel(s);
       updateTable(s);
 
-      const city = geohashToCity(s.geo_hash);
-      addFraudEvent(city, s.label, s.threat_type, s.score);
+      addFraudEvent(s);
     }
 
     function showGuardianBanner(userId, score, type) {

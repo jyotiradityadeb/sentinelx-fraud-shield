@@ -218,6 +218,55 @@ def _now_iso() -> str:
     return datetime.datetime.utcnow().isoformat()
 
 
+def _decode_geohash(geohash: str) -> tuple[float, float] | None:
+    base32 = "0123456789bcdefghjkmnpqrstuvwxyz"
+    if not geohash:
+        return None
+    geohash = geohash.strip().lower()
+    if not geohash:
+        return None
+    even_bit = True
+    lat_min, lat_max = -90.0, 90.0
+    lon_min, lon_max = -180.0, 180.0
+    for char in geohash:
+        idx = base32.find(char)
+        if idx < 0:
+            return None
+        for mask in [16, 8, 4, 2, 1]:
+            bit = (idx & mask) != 0
+            if even_bit:
+                mid = (lon_min + lon_max) / 2
+                if bit:
+                    lon_min = mid
+                else:
+                    lon_max = mid
+            else:
+                mid = (lat_min + lat_max) / 2
+                if bit:
+                    lat_min = mid
+                else:
+                    lat_max = mid
+            even_bit = not even_bit
+    return ((lat_min + lat_max) / 2, (lon_min + lon_max) / 2)
+
+
+def _resolve_lat_lng(session_row: dict[str, Any]) -> tuple[float, float]:
+    lat_raw = session_row.get("latitude")
+    lng_raw = session_row.get("longitude")
+    try:
+        if lat_raw is not None and lng_raw is not None:
+            return float(lat_raw), float(lng_raw)
+    except (TypeError, ValueError):
+        pass
+
+    decoded = _decode_geohash(str(session_row.get("geo_hash", "") or ""))
+    if decoded is not None:
+        return decoded
+
+    # India center fallback for map visuals.
+    return (20.5937, 78.9629)
+
+
 def _init_blocklist_table() -> None:
     """Ensure blocklist_numbers table exists in local store."""
     try:
@@ -254,6 +303,7 @@ def _as_live_session(session_row: dict[str, Any], result: dict[str, Any] | None 
     threat = str(session_row.get("threat", session_row.get("threat_type", "BEHAVIORAL_ANOMALY")))
     llm_summary = str(session_row.get("llm_summary", ""))
     timestamp = str(session_row.get("timestamp", session_row.get("created_at", _now_iso())))
+    latitude, longitude = _resolve_lat_lng(session_row)
     return {
         "id": session_row.get("id"),
         "user_id": str(session_row.get("user_id", "unknown")),
@@ -268,6 +318,8 @@ def _as_live_session(session_row: dict[str, Any], result: dict[str, Any] | None 
         "caller_trust": caller,
         "created_at": timestamp,
         "geo_hash": session_row.get("geo_hash", "tdr1j"),
+        "latitude": latitude,
+        "longitude": longitude,
         "sig_caller_trust": int(session_row.get("sig_caller_trust", result.get("sig_caller_trust", 0)) or 0),
         "sig_transition": int(session_row.get("sig_transition", result.get("sig_transition", 0)) or 0),
         "sig_confirm_press": int(session_row.get("sig_confirm_press", result.get("sig_confirm_press", 0)) or 0),

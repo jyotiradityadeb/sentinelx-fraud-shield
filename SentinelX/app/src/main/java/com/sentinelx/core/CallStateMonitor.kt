@@ -33,7 +33,9 @@ class CallStateMonitor(
     private val callStartTs = AtomicLong(0L)
     private val callAnsweredTs = AtomicLong(0L)
     private val callEndTs = AtomicLong(0L)
+    private val ringStartTs = AtomicLong(0L)
     private val callerNumber = AtomicReference<String?>(null)
+    private val callerNumberTs = AtomicLong(0L)
 
     @Volatile
     private var lastState: Int = TelephonyManager.CALL_STATE_IDLE
@@ -49,6 +51,18 @@ class CallStateMonitor(
 
     val currentCallState: Int
         get() = lastState
+
+    val currentRingStartTs: Long
+        get() = ringStartTs.get()
+
+    fun getFreshRingingNumber(maxAgeSeconds: Long = 8L): String? {
+        if (lastState != TelephonyManager.CALL_STATE_RINGING) return null
+        val number = callerNumber.get()?.takeIf { it.isNotBlank() } ?: return null
+        val ts = callerNumberTs.get()
+        if (ts <= 0L) return null
+        val age = ((System.currentTimeMillis() - ts) / 1000L).coerceAtLeast(0L)
+        return if (age <= maxAgeSeconds) number else null
+    }
 
     fun startMonitoring() {
         if (!hasPhonePermission()) {
@@ -117,6 +131,40 @@ class CallStateMonitor(
         }
     }
 
+    fun getRecentIncomingCallInfo(sinceTs: Long, maxAgeSeconds: Long = 12L): RecentCallInfo? {
+        if (!hasCallLogPermission()) return null
+        var cursor: Cursor? = null
+        return try {
+            cursor = context.contentResolver.query(
+                CallLog.Calls.CONTENT_URI,
+                arrayOf(CallLog.Calls.NUMBER, CallLog.Calls.DATE, CallLog.Calls.TYPE),
+                "${CallLog.Calls.DATE} >= ? AND (${CallLog.Calls.TYPE} = ? OR ${CallLog.Calls.TYPE} = ?)",
+                arrayOf(
+                    sinceTs.toString(),
+                    CallLog.Calls.INCOMING_TYPE.toString(),
+                    CallLog.Calls.MISSED_TYPE.toString(),
+                ),
+                "${CallLog.Calls.DATE} DESC",
+            )
+            if (cursor != null && cursor.moveToFirst()) {
+                val number = cursor.getString(0).orEmpty()
+                val ts = cursor.getLong(1)
+                val ageSeconds = ((System.currentTimeMillis() - ts) / 1000L).coerceAtLeast(0L)
+                if (number.isNotBlank() && ageSeconds <= maxAgeSeconds) {
+                    RecentCallInfo(number = number, ts = ts)
+                } else {
+                    null
+                }
+            } else {
+                null
+            }
+        } catch (_: Exception) {
+            null
+        } finally {
+            cursor?.close()
+        }
+    }
+
     private fun startWithTelephonyCallback() {
         val callback = object : TelephonyCallback(), TelephonyCallback.CallStateListener {
             override fun onCallStateChanged(state: Int) {
@@ -139,12 +187,18 @@ class CallStateMonitor(
     }
 
     private fun handleStateChange(state: Int, phoneNumber: String?) {
-        onStateChanged?.invoke(state)
         when (state) {
             TelephonyManager.CALL_STATE_RINGING -> {
-                callStartTs.set(System.currentTimeMillis())
+                val now = System.currentTimeMillis()
+                callStartTs.set(now)
+                ringStartTs.set(now)
                 if (!phoneNumber.isNullOrBlank()) {
                     callerNumber.set(phoneNumber)
+                    callerNumberTs.set(now)
+                } else {
+                    // Prevent stale number reuse across different rings.
+                    callerNumber.set(null)
+                    callerNumberTs.set(0L)
                 }
                 Log.d("SentinelX", "CallStateMonitor: RINGING")
             }
@@ -152,16 +206,19 @@ class CallStateMonitor(
                 if (callStartTs.get() == 0L) {
                     callStartTs.set(System.currentTimeMillis())
                 }
+                ringStartTs.set(0L)
                 callAnsweredTs.set(System.currentTimeMillis())
                 Log.d("SentinelX", "CallStateMonitor: OFFHOOK")
             }
             TelephonyManager.CALL_STATE_IDLE -> {
+                ringStartTs.set(0L)
                 if (lastState == TelephonyManager.CALL_STATE_OFFHOOK) {
                     val endTs = System.currentTimeMillis()
                     val durationMs = if (callAnsweredTs.get() > 0L) endTs - callAnsweredTs.get() else 0L
                     callEndTs.set(endTs)
                     val resolvedNumber = resolveLastNumber().ifBlank { callerNumber.get().orEmpty() }
                     callerNumber.set(resolvedNumber.ifBlank { null })
+                    callerNumberTs.set(if (resolvedNumber.isBlank()) 0L else endTs)
                     onCallEnd?.invoke(
                         CallEndEvent(
                             number = resolvedNumber,
@@ -174,6 +231,7 @@ class CallStateMonitor(
             }
         }
         lastState = state
+        onStateChanged?.invoke(state)
     }
 
     private fun resolveLastNumber(): String {

@@ -352,7 +352,7 @@
                 android:layout_height="wrap_content"
                 android:layout_marginTop="10dp"
                 android:background="@drawable/bg_button_outline_gray"
-                android:text="Demo Mode: OFF"
+                android:text="Presentation Mode: OFF"
                 android:textColor="#94A3B8" />
 
             <Button
@@ -363,6 +363,16 @@
                 android:background="@drawable/bg_button_red_soft"
                 android:text="TRIGGER HIGH RISK"
                 android:textColor="#fca5a5"
+                android:textStyle="bold" />
+
+            <Button
+                android:id="@+id/btnSimulateSafe"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:background="@drawable/bg_button_outline_blue"
+                android:text="TRIGGER SAFE"
+                android:textColor="#38BDF8"
                 android:textStyle="bold" />
         </LinearLayout>
 

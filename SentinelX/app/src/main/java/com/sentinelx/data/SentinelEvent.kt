@@ -222,5 +222,22 @@ data class SessionFeatures(
             networkThreatScore = 12,
             geoHash = "tdr1j",
         )
+
+        fun fromSafeDemo() = SessionFeatures(
+            sessionId = java.util.UUID.randomUUID().toString(),
+            userId = "demo_safe_user",
+            secondsSinceCall = 640L,
+            switchCount20s = 0,
+            confirmDwellMs = 12500L,
+            tapDensity = 1.1f,
+            revisitCount = 0,
+            sessionDurationMs = 36000L,
+            callerTrust = CallerTrust.KNOWN_CONTACT,
+            isMessagingBeforePayment = false,
+            isWhatsAppVoip = false,
+            voiceStressScore = 0.11f,
+            networkThreatScore = 0,
+            geoHash = "tdr1j",
+        )
     }
 }
