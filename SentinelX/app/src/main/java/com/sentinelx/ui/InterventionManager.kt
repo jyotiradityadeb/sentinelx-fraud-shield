@@ -2,8 +2,12 @@
 
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.app.PendingIntent
 import android.content.Context
+import android.content.Intent
+import android.graphics.Color
 import android.graphics.PixelFormat
+import android.media.RingtoneManager
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
@@ -18,15 +22,21 @@ import android.view.WindowManager
 import android.widget.TextView
 import androidx.core.app.NotificationCompat
 import com.sentinelx.R
+import java.lang.ref.WeakReference
 
 object InterventionManager {
     private const val CHANNEL_ID = "sentinelx_alerts"
+    private const val BLOCKLIST_CHANNEL_ID = "sentinelx_blocklist_alerts"
     private const val NOTIFICATION_ID = 2201
+    private const val BLOCKLIST_NOTIFICATION_ID = 2202
     private const val OVERLAY_AUTO_DISMISS_MS = 60_000L
     private const val GUARDIAN_WINDOW_MS = 120_000L
 
     @Volatile
-    private var currentOverlay: View? = null
+    private var currentOverlayRef: WeakReference<View>? = null
+
+    private val currentOverlay: View?
+        get() = currentOverlayRef?.get()
 
     @Volatile
     private var currentWindowManager: WindowManager? = null
@@ -43,10 +53,11 @@ object InterventionManager {
 
     fun dismissCurrentOverlay() {
         handler.post {
-            val overlay = currentOverlay ?: return@post
+            val overlay = currentOverlayRef?.get() ?: return@post
             val wm = currentWindowManager ?: return@post
             runCatching { wm.removeViewImmediate(overlay) }
-            currentOverlay = null
+            currentOverlayRef?.clear()
+            currentOverlayRef = null
             currentWindowManager = null
         }
     }
@@ -135,9 +146,12 @@ object InterventionManager {
                 @Suppress("DEPRECATION")
                 WindowManager.LayoutParams.TYPE_PHONE
             },
+            // FLAG_NOT_FOCUSABLE removed so touch events (Cancel button) work correctly
+            // FLAG_TURN_SCREEN_ON and FLAG_SHOW_WHEN_LOCKED ensure alert wakes the screen
             WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
                 WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
-                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+                WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON or
+                WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED,
             PixelFormat.TRANSLUCENT,
         ).apply {
             gravity = Gravity.CENTER
@@ -145,7 +159,7 @@ object InterventionManager {
 
         runCatching {
             wm.addView(overlay, params)
-            currentOverlay = overlay
+            currentOverlayRef = WeakReference(overlay)
             currentWindowManager = wm
             handler.postDelayed({ dismissCurrentOverlay() }, OVERLAY_AUTO_DISMISS_MS)
         }.onFailure {
@@ -161,6 +175,62 @@ object InterventionManager {
         }
     }
 
+    fun showBlocklistAlert(context: Context, number: String, displayName: String = number) {
+        val appContext = context.applicationContext
+        val nm = appContext.getSystemService(NotificationManager::class.java)
+        ensureBlocklistChannel(nm)
+
+        val blockIntent = Intent("com.sentinelx.BLOCK_AND_REPORT").apply {
+            setPackage(appContext.packageName)
+            putExtra("number", number)
+        }
+        val safeIntent = Intent("com.sentinelx.MARK_SAFE").apply {
+            setPackage(appContext.packageName)
+            putExtra("number", number)
+        }
+        val blockPi = PendingIntent.getBroadcast(
+            appContext, 3001, blockIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+        val safePi = PendingIntent.getBroadcast(
+            appContext, 3002, safeIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+        val fullScreenIntent = Intent(appContext, AlertActivity::class.java).apply {
+            putExtra("score", 95)
+            putExtra("label", "HIGH_RISK")
+            putExtra("prompt", "BLOCKED NUMBER $displayName is calling. Do NOT answer.")
+            putExtra("signals", "Personal blocklist match")
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+        }
+        val fullScreenPi = PendingIntent.getActivity(
+            appContext, 3003, fullScreenIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+
+        val notification = NotificationCompat.Builder(appContext, BLOCKLIST_CHANNEL_ID)
+            .setSmallIcon(android.R.drawable.stat_sys_warning)
+            .setContentTitle("SCAMMER CALLING")
+            .setStyle(
+                NotificationCompat.BigTextStyle()
+                    .bigText(
+                        "Blocked number $displayName is calling right now.\n\n" +
+                            "Do NOT answer. This number is on your personal blocklist.",
+                    ),
+            )
+            .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Block & Report", blockPi)
+            .addAction(android.R.drawable.ic_menu_info_details, "It's Safe", safePi)
+            .setFullScreenIntent(fullScreenPi, true)
+            .setCategory(NotificationCompat.CATEGORY_CALL)
+            .setPriority(NotificationCompat.PRIORITY_MAX)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+            .setVibrate(longArrayOf(0L, 500L, 200L, 500L))
+            .setAutoCancel(false)
+            .build()
+        nm.notify(BLOCKLIST_NOTIFICATION_ID, notification)
+        vibrate(appContext, longArrayOf(0L, 500L, 200L, 500L))
+    }
+
     private fun ensureChannel(manager: NotificationManager) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
         val channel = NotificationChannel(
@@ -169,6 +239,24 @@ object InterventionManager {
             NotificationManager.IMPORTANCE_HIGH,
         ).apply {
             description = "SentinelX payment risk alerts"
+        }
+        manager.createNotificationChannel(channel)
+    }
+
+    private fun ensureBlocklistChannel(manager: NotificationManager) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+        val alarmUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)
+        val channel = NotificationChannel(
+            BLOCKLIST_CHANNEL_ID,
+            "SentinelX Scammer Alerts",
+            NotificationManager.IMPORTANCE_MAX,
+        ).apply {
+            description = "Alerts when a blocked scammer number calls"
+            enableVibration(true)
+            vibrationPattern = longArrayOf(0L, 500L, 200L, 500L)
+            setSound(alarmUri, null)
+            enableLights(true)
+            lightColor = Color.RED
         }
         manager.createNotificationChannel(channel)
     }

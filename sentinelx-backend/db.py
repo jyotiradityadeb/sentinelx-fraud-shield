@@ -105,7 +105,7 @@ class _LocalStore:
                 self._data = json.loads(self._db_path.read_text(encoding="utf-8"))
             except Exception:
                 self._data = {}
-        for table in ("sessions", "events", "threat_network", "guardians"):
+        for table in ("sessions", "events", "threat_network", "guardians", "blocklist_numbers"):
             self._data.setdefault(table, [])
 
     def _save(self) -> None:

@@ -11,6 +11,7 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_PHONE_CALL" />
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.VIBRATE" />
@@ -37,6 +38,10 @@
             android:taskAffinity=""
             android:theme="@style/Theme.Transparent" />
 
+        <activity
+            android:name=".ui.BlocklistActivity"
+            android:exported="false"
+            android:label="Blocked Numbers" />
         <activity
             android:name=".ui.OnboardingActivity"
             android:exported="false" />
@@ -69,8 +74,17 @@
         <service
             android:name=".core.SentinelForegroundService"
             android:exported="false"
-            android:foregroundServiceType="dataSync"
+            android:foregroundServiceType="phoneCall|dataSync"
             android:stopWithTask="false" />
+
+        <receiver
+            android:name=".ui.BlocklistAlertReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.sentinelx.BLOCK_AND_REPORT" />
+                <action android:name="com.sentinelx.MARK_SAFE" />
+            </intent-filter>
+        </receiver>
 
         <receiver
             android:name=".core.BootReceiver"

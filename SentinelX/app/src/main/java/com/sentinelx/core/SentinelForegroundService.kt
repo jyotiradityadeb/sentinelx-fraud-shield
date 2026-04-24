@@ -13,13 +13,23 @@ import android.provider.Settings
 import android.telephony.TelephonyManager
 import android.util.Log
 import androidx.core.app.NotificationCompat
+import com.sentinelx.ui.InterventionManager
 import com.sentinelx.ui.MainActivity
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 class SentinelForegroundService : Service() {
     private lateinit var callStateMonitor: CallStateMonitor
     private lateinit var appUsageAnalyzer: AppUsageAnalyzer
     private lateinit var voiceStressAnalyzer: VoiceStressAnalyzer
     private lateinit var eventFlusher: EventFlusher
+    private lateinit var callerTrustClassifier: CallerTrustClassifier
+
+    private val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
 
     override fun onCreate() {
         super.onCreate()
@@ -55,7 +65,15 @@ class SentinelForegroundService : Service() {
             .setSilent(true)
             .build()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                startForeground(
+                    NOTIFICATION_ID,
+                    notification,
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_PHONE_CALL or ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC,
+                )
+            } else {
+                startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
+            }
         } else {
             startForeground(NOTIFICATION_ID, notification)
         }
@@ -63,6 +81,7 @@ class SentinelForegroundService : Service() {
         appUsageAnalyzer = AppUsageAnalyzer(applicationContext)
         voiceStressAnalyzer = VoiceStressAnalyzer()
         eventFlusher = EventFlusher(applicationContext)
+        callerTrustClassifier = CallerTrustClassifier(applicationContext)
         callStateMonitor = CallStateMonitor(
             context = applicationContext,
             onCallEnd = { event ->
@@ -76,6 +95,33 @@ class SentinelForegroundService : Service() {
                 }
                 if (state == TelephonyManager.CALL_STATE_IDLE) {
                     voiceStressAnalyzer.stopAnalyzing()
+                }
+                if (state == TelephonyManager.CALL_STATE_RINGING) {
+                    // On API 31+ the number is not delivered in the callback, poll call log
+                    scope.launch {
+                        delay(300L)
+                        var number: String? = null
+                        repeat(6) {
+                            if (number.isNullOrBlank()) {
+                                number = callStateMonitor.getRecentCallInfo(maxAgeSeconds = 5L)?.number
+                                    ?: callStateMonitor.lastCallerNumber
+                                if (number.isNullOrBlank()) delay(500L)
+                            }
+                        }
+                        if (number.isNullOrBlank()) return@launch
+                        val trustLabels = callerTrustClassifier.classify(number!!)
+                        if (trustLabels.contains(CallerTrustClassifier.CallerTrust.SCAMMER_MARKED)) {
+                            Log.d("SentinelX", "BLOCKED NUMBER calling: $number — alerting during ring")
+                            InterventionManager.show(
+                                context = applicationContext,
+                                score = 95,
+                                label = "HIGH_RISK",
+                                llmUserPrompt = "⚠️ INCOMING CALL FROM BLOCKED NUMBER: $number\n\nThis number is on your scammer blocklist. Do NOT answer.",
+                                signals = listOf("Number is in your personal blocklist", "Blocked caller alert"),
+                            )
+                            updateLiveStatus(applicationContext, "🚨 BLOCKED NUMBER CALLING: $number")
+                        }
+                    }
                 }
             },
         )
@@ -101,6 +147,7 @@ class SentinelForegroundService : Service() {
         callStateMonitor.stopMonitoring()
         eventFlusher.stopFlushing()
         voiceStressAnalyzer.stopAnalyzing()
+        scope.cancel()
         super.onDestroy()
     }
 

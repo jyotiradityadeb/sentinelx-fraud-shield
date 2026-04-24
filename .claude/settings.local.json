@@ -1,0 +1,20 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(adb devices *)",
+      "Bash($ADB devices *)",
+      "Bash(/c/Users/jyoti/AppData/Local/Android/Sdk/platform-tools/adb.exe shell *)",
+      "Bash(./gradlew assembleDebug)",
+      "Read(//c/Users/jyoti/OneDrive/Desktop/hackable/sentinelx-backend/**)",
+      "Bash(python -m uvicorn main:app --host 0.0.0.0 --port 8000)",
+      "Bash($ADB install *)",
+      "Bash(python -m uvicorn main:app --host 0.0.0.0 --port 8000 --timeout-keep-alive 5)",
+      "PowerShell(netstat *)",
+      "PowerShell(Stop-Process *)",
+      "Bash($ADB reverse *)",
+      "Bash(/c/Users/jyoti/AppData/Local/Android/Sdk/platform-tools/adb.exe logcat *)",
+      "Bash(curl -s http://127.0.0.1:8000/health)",
+      "Bash(git add *)"
+    ]
+  }
+}

@@ -1,4 +1,4 @@
-﻿package com.sentinelx.ui
+package com.sentinelx.ui
 
 import android.Manifest
 import android.content.BroadcastReceiver
@@ -20,19 +20,19 @@ import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import com.google.android.material.snackbar.Snackbar
 import com.sentinelx.core.BackendConfig
+import com.sentinelx.core.BlocklistManager
 import com.sentinelx.core.EventFlusher
 import com.sentinelx.core.GuardianManager
 import com.sentinelx.core.PermissionHealth
-import com.sentinelx.core.ScammerNumberStore
 import com.sentinelx.core.SentinelForegroundService
 import com.sentinelx.data.SessionFeatures
 import com.sentinelx.databinding.ActivityMainBinding
-import com.sentinelx.ui.InterventionManager
 
 class MainActivity : AppCompatActivity() {
     private lateinit var binding: ActivityMainBinding
-    private lateinit var scammerNumberStore: ScammerNumberStore
+    private lateinit var blocklistManager: BlocklistManager
     private lateinit var guardianManager: GuardianManager
     private val runtimePermsRequestCode = 1001
 
@@ -52,14 +52,19 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private val blocklistChangedReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action == BlocklistManager.ACTION_BLOCKLIST_CHANGED) updateBlocklistCount()
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
-        scammerNumberStore = ScammerNumberStore(this)
+        blocklistManager = BlocklistManager(this)
         guardianManager = GuardianManager(applicationContext)
-        binding.scammerNumbersInput.setText(scammerNumberStore.getAsDisplayText())
 
         binding.btnOpenAccessibility.setOnClickListener {
             startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
@@ -75,12 +80,8 @@ class MainActivity : AppCompatActivity() {
             showBackendUrlDialog()
         }
 
-        binding.btnSaveScammerNumbers.setOnClickListener {
-            val raw = binding.scammerNumbersInput.text?.toString().orEmpty()
-            scammerNumberStore.setFromRawInput(raw)
-            binding.scammerNumbersInput.setText(scammerNumberStore.getAsDisplayText())
-            Toast.makeText(this, "Scammer numbers saved", Toast.LENGTH_SHORT).show()
-            appendEvent("Blocked numbers updated (${scammerNumberStore.count()})")
+        binding.btnManageBlocklist.setOnClickListener {
+            BlocklistActivity.start(this)
         }
 
         binding.btnSetGuardian.setOnClickListener {
@@ -94,9 +95,13 @@ class MainActivity : AppCompatActivity() {
             toggleSafeMode()
         }
 
+        binding.btnDemoMode.setOnClickListener {
+            toggleDemoMode()
+        }
+
         binding.btnSimulateScam.setOnClickListener {
             binding.btnSimulateScam.isEnabled = false
-            binding.btnSimulateScam.text = "⏳ Simulating..."
+            binding.btnSimulateScam.text = "Simulating..."
             updateSignalDisplay(
                 callerPts = 22,
                 transitionPts = 20,
@@ -123,7 +128,7 @@ class MainActivity : AppCompatActivity() {
             appendEvent("Demo scam simulation sent")
             Handler(Looper.getMainLooper()).postDelayed({
                 binding.btnSimulateScam.isEnabled = true
-                binding.btnSimulateScam.text = "⚡ TRIGGER HIGH RISK"
+                binding.btnSimulateScam.text = "TRIGGER HIGH RISK"
             }, 5000)
         }
 
@@ -133,23 +138,30 @@ class MainActivity : AppCompatActivity() {
         syncSafeModeButton()
         updateGuardianStatus()
         updatePermissionDots()
+        updateBlocklistCount()
         appendEvent("SentinelX UI ready")
         appendEvent("Backend ${BackendConfig.getBackendUrl(this)}")
     }
 
     override fun onStart() {
         super.onStart()
+        val scoreFilter = IntentFilter(ACTION_SCORE_RESULT)
+        val blocklistFilter = IntentFilter(BlocklistManager.ACTION_BLOCKLIST_CHANGED)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            registerReceiver(scoreReceiver, IntentFilter(ACTION_SCORE_RESULT), RECEIVER_NOT_EXPORTED)
+            registerReceiver(scoreReceiver, scoreFilter, RECEIVER_NOT_EXPORTED)
+            registerReceiver(blocklistChangedReceiver, blocklistFilter, RECEIVER_NOT_EXPORTED)
         } else {
             @Suppress("DEPRECATION")
-            registerReceiver(scoreReceiver, IntentFilter(ACTION_SCORE_RESULT))
+            registerReceiver(scoreReceiver, scoreFilter)
+            @Suppress("DEPRECATION")
+            registerReceiver(blocklistChangedReceiver, blocklistFilter)
         }
     }
 
     override fun onStop() {
         super.onStop()
         runCatching { unregisterReceiver(scoreReceiver) }
+        runCatching { unregisterReceiver(blocklistChangedReceiver) }
     }
 
     override fun onResume() {
@@ -157,7 +169,31 @@ class MainActivity : AppCompatActivity() {
         requestMissingRuntimePermissions()
         updatePermissionDots()
         updateGuardianStatus()
-        syncSafeModeButton()
+        syncSafeModeButton()  // also calls syncDemoModeButton()
+        updateBlocklistCount()
+        updateStats()
+    }
+
+    private fun updateStats() {
+        val statsPrefs = getSharedPreferences("sentinelx_stats", Context.MODE_PRIVATE)
+        val installPrefs = getSharedPreferences("sentinelx_prefs", Context.MODE_PRIVATE)
+
+        // Record install day on first run
+        if (!installPrefs.contains("install_day")) {
+            installPrefs.edit().putLong("install_day", System.currentTimeMillis()).apply()
+        }
+        val installDay = installPrefs.getLong("install_day", System.currentTimeMillis())
+        val daysProtected = ((System.currentTimeMillis() - installDay) / 86_400_000L).coerceAtLeast(1L)
+
+        binding.statCallsAnalyzed.text = statsPrefs.getLong("total_calls_analyzed", 0L).toString()
+        binding.statScamBlocked.text = statsPrefs.getLong("scam_attempts_blocked", 0L).toString()
+        binding.statBlocklistSize.text = blocklistManager.getBlockedEntries().size.toString()
+        binding.statDaysProtected.text = daysProtected.toString()
+    }
+
+    private fun updateBlocklistCount() {
+        val count = blocklistManager.getBlockedEntries().size
+        binding.tvBlocklistCount.text = "$count number${if (count == 1) "" else "s"} blocked"
     }
 
     private fun updateSignalDisplay(
@@ -300,15 +336,36 @@ class MainActivity : AppCompatActivity() {
         val on = getSharedPreferences("sentinelx_prefs", Context.MODE_PRIVATE)
             .getBoolean("safe_mode_active", false)
         if (on) {
-            binding.btnSafeMode.text = "🛡 Safe Payment Mode: ON"
+            binding.btnSafeMode.text = "Safe Payment Mode: ON"
             binding.btnSafeMode.setBackgroundResource(com.sentinelx.R.drawable.bg_button_dark_toggle_on)
         } else {
-            binding.btnSafeMode.text = "🛡 Safe Payment Mode: OFF"
+            binding.btnSafeMode.text = "Safe Payment Mode: OFF"
             binding.btnSafeMode.setBackgroundResource(com.sentinelx.R.drawable.bg_button_dark_toggle_off)
         }
         if (binding.btnSimulateScam.text.isBlank() || binding.btnSimulateScam.text.contains("SIMULATE", ignoreCase = true)) {
-            binding.btnSimulateScam.text = "⚡ TRIGGER HIGH RISK"
+            binding.btnSimulateScam.text = "TRIGGER HIGH RISK"
         }
+        syncDemoModeButton()
+    }
+
+    private fun toggleDemoMode() {
+        val prefs = getSharedPreferences("sentinelx_prefs", Context.MODE_PRIVATE)
+        val next = !prefs.getBoolean("demo_mode_enabled", false)
+        prefs.edit().putBoolean("demo_mode_enabled", next).apply()
+        syncDemoModeButton()
+        val msg = if (next) "Demo Mode ON — backend calls intercepted with fake responses" else "Demo Mode OFF"
+        Snackbar.make(binding.root, msg, Snackbar.LENGTH_LONG).show()
+        appendEvent("Demo mode ${if (next) "enabled" else "disabled"}")
+    }
+
+    private fun syncDemoModeButton() {
+        val on = getSharedPreferences("sentinelx_prefs", Context.MODE_PRIVATE)
+            .getBoolean("demo_mode_enabled", false)
+        binding.btnDemoMode.text = if (on) "Demo Mode: ON" else "Demo Mode: OFF"
+        binding.btnDemoMode.setBackgroundResource(
+            if (on) com.sentinelx.R.drawable.bg_button_dark_toggle_on
+            else com.sentinelx.R.drawable.bg_button_outline_gray,
+        )
     }
 
     private fun requestMissingRuntimePermissions() {
@@ -356,10 +413,10 @@ class MainActivity : AppCompatActivity() {
         )
         if (sent) {
             appendEvent("Guardian SMS sent")
-            Toast.makeText(this, "Guardian informed by SMS", Toast.LENGTH_SHORT).show()
+            Snackbar.make(binding.root, "Guardian informed by SMS", Snackbar.LENGTH_SHORT).show()
         } else {
             appendEvent("Guardian SMS failed")
-            Toast.makeText(this, "Could not send guardian SMS", Toast.LENGTH_SHORT).show()
+            Snackbar.make(binding.root, "Could not send guardian SMS", Snackbar.LENGTH_SHORT).show()
         }
     }
 }

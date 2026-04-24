@@ -218,6 +218,34 @@ def _now_iso() -> str:
     return datetime.datetime.utcnow().isoformat()
 
 
+def _init_blocklist_table() -> None:
+    """Ensure blocklist_numbers table exists in local store."""
+    try:
+        db.table("blocklist_numbers").select("*").limit(1).execute()
+    except Exception:
+        pass  # local store creates tables on first insert
+
+
+def _get_community_blocked_numbers() -> set[str]:
+    """Return numbers reported by 3+ unique reporters."""
+    try:
+        rows = db.table("blocklist_numbers").select("*").execute().data or []
+        from collections import Counter
+        counts: Counter = Counter()
+        for row in rows:
+            num = str(row.get("number", ""))
+            reporter = str(row.get("reporter_id", ""))
+            if num:
+                counts[(num, reporter)] = 1
+        number_reporter_counts: Counter = Counter()
+        for (num, _reporter), _ in counts.items():
+            number_reporter_counts[num] += 1
+        return {num for num, cnt in number_reporter_counts.items() if cnt >= 3}
+    except Exception as exc:
+        print(f"community blocklist error: {exc}")
+        return set()
+
+
 def _as_live_session(session_row: dict[str, Any], result: dict[str, Any] | None = None) -> dict[str, Any]:
     result = result or {}
     caller = str(session_row.get("caller", session_row.get("caller_trust", "UNKNOWN")))
@@ -330,6 +358,7 @@ async def startup_event() -> None:
         seed_demo_threats(200)
     except Exception as exc:
         print(f"Threat seed skipped: {exc}")
+    _init_blocklist_table()
 
 
 @app.get("/")
@@ -418,6 +447,15 @@ async def events(payload: EventBatch):
 async def score_session(payload: SessionPayload):
     payload_dict = _to_dict(payload)
     print(f"[/score-session] payload session_id={payload_dict.get('session_id')} user_id={payload_dict.get('user_id')}")
+
+    # Force HIGH_RISK if the caller number appears in the community blocklist
+    caller_number = str(payload_dict.get("caller_trust", "") or "")
+    community_numbers = _get_community_blocked_numbers()
+    caller_digits = "".join(c for c in caller_number if c.isdigit())
+    if caller_digits and caller_digits in community_numbers:
+        print(f"[/score-session] community blocklist hit for {caller_digits}")
+        payload_dict["caller_trust"] = "SCAMMER_MARKED"
+
     result = _score_payload(payload_dict)
     print(
         f"[/score-session] scored user={payload_dict.get('user_id')} score={result['score']} label={result['label']} "
@@ -547,6 +585,74 @@ async def report_threat_endpoint(payload: dict):
 @app.get("/threat-stats")
 async def threat_stats():
     return get_stats()
+
+
+@app.get("/community-blocklist")
+async def community_blocklist():
+    numbers = list(_get_community_blocked_numbers())
+    return {"numbers": numbers, "count": len(numbers), "updated_at": _now_iso()}
+
+
+@app.post("/report-number")
+async def report_number(payload: dict):
+    number = str(payload.get("number", "")).strip()
+    reporter_id = str(payload.get("reporter_id", "unknown")).strip()
+    reason = str(payload.get("reason", "MANUAL")).strip()
+    if not number:
+        return {"status": "error", "detail": "number required"}
+    try:
+        db.table("blocklist_numbers").insert({
+            "number": number,
+            "reporter_id": reporter_id,
+            "reason": reason,
+            "reported_at": _now_iso(),
+        }).execute()
+    except Exception as exc:
+        print(f"/report-number insert warning: {exc}")
+    try:
+        rows = db.table("blocklist_numbers").select("*").execute().data or []
+        total = sum(1 for r in rows if str(r.get("number", "")) == number)
+        community_blocked = total >= 3
+    except Exception:
+        total = 1
+        community_blocked = False
+    return {"status": "ok", "total_reports": total, "community_blocked": community_blocked}
+
+
+@app.post("/analyze-number")
+async def analyze_number(payload: dict):
+    number = str(payload.get("number", "")).strip()
+    if not number:
+        return {"risk_level": "UNKNOWN", "explanation": "No number provided.", "suggest_block": False}
+
+    community_blocked = number in _get_community_blocked_numbers()
+    if community_blocked:
+        return {
+            "risk_level": "HIGH",
+            "explanation": f"{number} has been reported by multiple users as a scam number.",
+            "suggest_block": True,
+        }
+
+    # Heuristic analysis based on number patterns
+    digits = "".join(c for c in number if c.isdigit())
+    risk_level = "LOW"
+    explanation = "No known risk signals for this number."
+    suggest_block = False
+
+    if len(digits) < 7:
+        risk_level = "MEDIUM"
+        explanation = "Unusually short number — may be a spoofed or masked caller ID."
+        suggest_block = False
+    elif digits.startswith(("140", "141", "142", "160")):
+        risk_level = "HIGH"
+        explanation = "Number prefix matches known telemarketing/scam ranges in India."
+        suggest_block = True
+    elif digits == digits[0] * len(digits):
+        risk_level = "HIGH"
+        explanation = "Repeated-digit number often associated with spoofed caller IDs."
+        suggest_block = True
+
+    return {"risk_level": risk_level, "explanation": explanation, "suggest_block": suggest_block}
 
 
 @app.post("/notify-guardian")

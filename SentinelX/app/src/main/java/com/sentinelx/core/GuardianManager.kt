@@ -106,8 +106,19 @@ class GuardianManager(private val context: Context) {
         }
     }
 
+    fun sendGuardianAlert(score: Int, summary: String, callerNumber: String) {
+        val name = getGuardianName() ?: "your contact"
+        val message = "SentinelX ALERT: $name may be targeted by a scam call from $callerNumber. " +
+            "Risk: $score/120. $summary. Contact them NOW."
+        val phone = getGuardianPhone() ?: return
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        // Store the caller number for context
+        prefs.edit().putString("last_alert_caller", callerNumber).apply()
+        sendGuardianSms(score, message, "INCOMING_SCAM_CALL")
+    }
+
     private fun buildSmsMessage(score: Int, summary: String, type: String): String {
-        return "SentinelX Alert\nRisk: $score/120 ($type)\n$summary\nPlease call them now."
+        return "SentinelX ALERT\nRisk: $score/120 ($type)\n$summary\nPlease call them NOW."
     }
 
     private fun buildWhatsAppMessage(score: Int, summary: String, type: String): String {

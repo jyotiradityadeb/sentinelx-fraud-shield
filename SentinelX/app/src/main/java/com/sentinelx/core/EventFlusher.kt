@@ -114,8 +114,36 @@ class EventFlusher(
                 status = "Risk $score/120 ($label)",
             )
             val callerTrust = payload.caller_trust.uppercase()
-            val shouldIntervene = callerTrust == "SCAMMER_MARKED"
-            if (shouldIntervene) {
+            val isBlocklisted = callerTrust == "SCAMMER_MARKED"
+            val isHighRisk = score >= 80 || label.equals("HIGH_RISK", ignoreCase = true)
+            val isSuspicious = score >= 40 || label.equals("SUSPICIOUS", ignoreCase = true)
+            val shouldIntervene = isBlocklisted || isHighRisk || isSuspicious
+            val isTrustedCaller = callerTrust == "KNOWN_CONTACT"
+            val finalShouldIntervene = shouldIntervene && !(isTrustedCaller && score < 40)
+
+            // Always broadcast so UI refreshes regardless of intervention decision
+            val intent = android.content.Intent("com.sentinelx.SCORE_RESULT").apply {
+                putExtra("score", score)
+                putExtra("label", label)
+                putExtra("callerPts", scoreJson?.get("sig_caller_trust")?.asInt ?: 0)
+                putExtra("transitionPts", scoreJson?.get("sig_transition")?.asInt ?: 0)
+                putExtra("confirmPts", scoreJson?.get("sig_confirm_press")?.asInt ?: 0)
+                putExtra("behavioralPts", scoreJson?.get("sig_behavioral")?.asInt ?: 0)
+                putExtra("voicePts", scoreJson?.get("sig_voice_stress")?.asInt ?: 0)
+                putExtra("networkPts", scoreJson?.get("sig_network")?.asInt ?: 0)
+            }
+            context.sendBroadcast(intent)
+
+            // Track stats
+            val statsPrefs = context.getSharedPreferences("sentinelx_stats", Context.MODE_PRIVATE)
+            statsPrefs.edit()
+                .putLong("total_calls_analyzed", statsPrefs.getLong("total_calls_analyzed", 0L) + 1L)
+                .apply()
+
+            if (finalShouldIntervene) {
+                statsPrefs.edit()
+                    .putLong("scam_attempts_blocked", statsPrefs.getLong("scam_attempts_blocked", 0L) + 1L)
+                    .apply()
                 InterventionManager.show(
                     context = context,
                     score = score,
@@ -130,19 +158,8 @@ class EventFlusher(
                         threatType = threatType,
                     )
                 }
-                val intent = android.content.Intent("com.sentinelx.SCORE_RESULT").apply {
-                    putExtra("score", score)
-                    putExtra("label", label)
-                    putExtra("callerPts", scoreJson?.get("sig_caller_trust")?.asInt ?: 0)
-                    putExtra("transitionPts", scoreJson?.get("sig_transition")?.asInt ?: 0)
-                    putExtra("confirmPts", scoreJson?.get("sig_confirm_press")?.asInt ?: 0)
-                    putExtra("behavioralPts", scoreJson?.get("sig_behavioral")?.asInt ?: 0)
-                    putExtra("voicePts", scoreJson?.get("sig_voice_stress")?.asInt ?: 0)
-                    putExtra("networkPts", scoreJson?.get("sig_network")?.asInt ?: 0)
-                }
-                context.sendBroadcast(intent)
             } else {
-                Log.d("SentinelX", "Intervention skipped for trusted callerTrust=$callerTrust")
+                Log.d("SentinelX", "Intervention suppressed callerTrust=$callerTrust score=$score label=$label")
             }
         }
     }
@@ -179,7 +196,28 @@ class EventFlusher(
         }
     }
 
+    private fun isDemoMode(): Boolean =
+        context.getSharedPreferences("sentinelx_prefs", android.content.Context.MODE_PRIVATE)
+            .getBoolean("demo_mode_enabled", false)
+
+    private fun demoScoreResponse(payload: String): String {
+        // Simulate a realistic HIGH_RISK response for demo mode
+        return """{"score":92,"total_score":92,"label":"HIGH_RISK","triggered_signals":[{"name":"Caller Trust Index","pts":22},{"name":"Transition Velocity","pts":18},{"name":"Voice Stress Index","pts":16}],"sig_caller_trust":22,"sig_transition":18,"sig_confirm_press":14,"sig_behavioral":10,"sig_voice_stress":16,"sig_network":12,"anomaly_score":0.88,"isoforest_score":0.85,"river_score":0.91}"""
+    }
+
+    private fun demoExplainResponse(): String {
+        return """{"user_prompt":"Demo Mode: Suspicious payment behavior detected. An unknown caller may be guiding you through a fraudulent transaction. Stop and verify.","guardian_message":"Demo alert: Your contact may be at risk of a scam call.","threat_type":"VISHING","dashboard_summary":"Demo simulation of high-risk vishing attack.","recommended_action":"BLOCK","fraud_likelihood":"HIGH"}"""
+    }
+
     private suspend fun postJson(url: String, json: String): String? = withContext(Dispatchers.IO) {
+        if (isDemoMode()) {
+            Log.d("EventFlusher", "Demo mode — intercepting POST to $url")
+            return@withContext when {
+                url.endsWith("/score-session") -> demoScoreResponse(json)
+                url.endsWith("/explain") -> demoExplainResponse()
+                else -> """{"status":"ok","count":1}"""
+            }
+        }
         val body = json.toRequestBody(jsonMediaType)
         val request = Request.Builder().url(url).post(body).build()
         return@withContext try {
