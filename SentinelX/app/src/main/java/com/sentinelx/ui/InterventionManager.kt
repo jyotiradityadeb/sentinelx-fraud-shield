@@ -40,6 +40,16 @@ object InterventionManager {
         llmUserPrompt: String,
         signals: List<String> = emptyList(),
     ) {
+        val normalizedLabel = label.uppercase()
+        if (normalizedLabel == "HIGH_RISK" || normalizedLabel == "SUSPICIOUS" || score >= 40) {
+            AlertActivity.start(
+                context = context.applicationContext,
+                score = score.coerceAtLeast(40),
+                label = if (normalizedLabel == "HIGH_RISK" || score >= 80) "HIGH_RISK" else "SUSPICIOUS",
+                prompt = llmUserPrompt,
+                signals = if (signals.isEmpty()) "-" else signals.joinToString(" | "),
+            )
+        }
         when {
             score >= 95 -> showTier3(context, score, llmUserPrompt, signals)
             score >= 80 || label == "HIGH_RISK" -> showTier2(context, score, llmUserPrompt)
@@ -59,6 +69,13 @@ object InterventionManager {
     }
 
     private fun showTier1(context: Context, score: Int) {
+        AlertActivity.start(
+            context = context.applicationContext,
+            score = score.coerceAtLeast(40),
+            label = "SUSPICIOUS",
+            prompt = "Unusual payment behavior detected. Verify caller and recipient before paying.",
+            signals = "-",
+        )
         val appContext = context.applicationContext
         val manager = appContext.getSystemService(NotificationManager::class.java)
         ensureChannel(manager)

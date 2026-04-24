@@ -11,8 +11,10 @@ object PermissionHealth {
             context.contentResolver,
             Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES,
         ) ?: return false
-        val serviceId = "${context.packageName}/com.sentinelx.core.SentinelAccessibilityService"
-        return enabled.contains(serviceId, ignoreCase = true)
+        val normalized = enabled.lowercase()
+        val full = "${context.packageName}/com.sentinelx.core.sentinelaccessibilityservice".lowercase()
+        val short = "${context.packageName}/.core.sentinelaccessibilityservice".lowercase()
+        return normalized.contains(full) || normalized.contains(short)
     }
 
     fun hasUsageStatsPermission(context: Context): Boolean {
@@ -32,4 +34,3 @@ object PermissionHealth {
         return pm.isIgnoringBatteryOptimizations(context.packageName)
     }
 }
-

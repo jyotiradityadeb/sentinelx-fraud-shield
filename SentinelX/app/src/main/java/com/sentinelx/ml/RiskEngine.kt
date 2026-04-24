@@ -73,9 +73,10 @@ class RiskEngine {
             "BUSINESS_NUMBER" -> 5
             "UNKNOWN" -> 15
             "REPEATED_UNKNOWN" -> 22
+            "SCAMMER_MARKED" -> 30
             else -> 15
         }
-        return points.coerceAtMost(25)
+        return points.coerceAtMost(30)
     }
 
     private fun calcTransitionVelocityScore(f: SessionFeatures): Int {

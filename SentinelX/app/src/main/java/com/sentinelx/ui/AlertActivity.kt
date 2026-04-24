@@ -3,6 +3,7 @@ package com.sentinelx.ui
 import android.content.Context
 import android.content.Intent
 import android.os.Bundle
+import android.util.Log
 import android.widget.Button
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
@@ -11,6 +12,8 @@ import com.sentinelx.R
 class AlertActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        setShowWhenLocked(true)
+        setTurnScreenOn(true)
         setContentView(R.layout.activity_alert)
 
         val score = intent.getIntExtra(EXTRA_SCORE, 0)
@@ -23,6 +26,7 @@ class AlertActivity : AppCompatActivity() {
         findViewById<TextView>(R.id.alertMessage).text = prompt
         findViewById<TextView>(R.id.alertSignals).text = "Signals: $signals"
         findViewById<Button>(R.id.btnAlertClose).setOnClickListener { finish() }
+        Log.d("SentinelX", "AlertActivity shown score=$score label=$label")
     }
 
     companion object {

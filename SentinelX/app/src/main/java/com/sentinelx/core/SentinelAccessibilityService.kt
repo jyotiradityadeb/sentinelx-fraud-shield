@@ -78,6 +78,9 @@ class SentinelAccessibilityService : AccessibilityService() {
             Log.d("SentinelX", "Payment app detected: $packageName")
             maybeShowPrePaymentIntervention()
         }
+        if (mappedType == EventType.WINDOW_CHANGE && packageName !in PAYMENT_PACKAGES && isPaymentSessionActive) {
+            onPaymentSessionExit(ts, packageName)
+        }
 
         if (isPaymentSessionActive && (screenName.contains("Confirm", true) || screenName.contains("Success", true))) {
             Log.d("SentinelX", "Payment confirm detected on screen: $screenName")
@@ -115,7 +118,7 @@ class SentinelAccessibilityService : AccessibilityService() {
         )
         Log.d("SentinelX", "Payment confirm event added, dwellMs=$confirmDwellMs, buffer=${getBufferSnapshot().size}")
 
-        val callerTrust = mapCallerTrust(callStateMonitor.lastCallerNumber)
+        val callerTrust = mapCallerTrust(resolveCallerNumber())
         val snapshot = getBufferSnapshot()
         val features = SessionFeatures.fromEvents(
             events = snapshot,
@@ -132,10 +135,22 @@ class SentinelAccessibilityService : AccessibilityService() {
         currentSessionId = UUID.randomUUID().toString()
     }
 
+    private fun onPaymentSessionExit(ts: Long, nextPackage: String) {
+        if (!isPaymentSessionActive) return
+        if (nextPackage in PAYMENT_PACKAGES) return
+        val sessionAgeMs = (ts - paymentOpenTs).coerceAtLeast(0L)
+        if (sessionAgeMs < 1500L) {
+            return
+        }
+        Log.d("SentinelX", "Payment session exit detected, finalizing session (ageMs=$sessionAgeMs)")
+        onPaymentConfirm(ts)
+    }
+
     private fun mapCallerTrust(number: String?): CallerTrust {
         if (number.isNullOrBlank()) return CallerTrust.UNKNOWN
         val labels = callerTrustClassifier.classify(number)
         return when {
+            labels.contains(CallerTrustClassifier.CallerTrust.SCAMMER_MARKED) -> CallerTrust.SCAMMER_MARKED
             labels.contains(CallerTrustClassifier.CallerTrust.KNOWN_CONTACT) -> CallerTrust.KNOWN_CONTACT
             labels.contains(CallerTrustClassifier.CallerTrust.REPEATED_UNKNOWN) -> CallerTrust.REPEATED_UNKNOWN
             labels.contains(CallerTrustClassifier.CallerTrust.BUSINESS_NUMBER) -> CallerTrust.BUSINESS_NUMBER
@@ -149,23 +164,38 @@ class SentinelAccessibilityService : AccessibilityService() {
         prePaymentAlertShown = false
     }
 
+    private fun resolveCallerNumber(): String? {
+        val direct = callStateMonitor.lastCallerNumber
+        if (!direct.isNullOrBlank()) return direct
+        return callStateMonitor.getRecentCallNumber(maxAgeSeconds = 600L).ifBlank { null }
+    }
+
     private fun maybeShowPrePaymentIntervention() {
         if (prePaymentAlertShown) return
 
         val secondsSinceEnd = callStateMonitor.getSecondsSinceCallEnd()
         val callActive = callStateMonitor.currentCallState != TelephonyManager.CALL_STATE_IDLE
-        val callerTrust = mapCallerTrust(callStateMonitor.lastCallerNumber)
+        val recentCall = callStateMonitor.getRecentCallInfo(maxAgeSeconds = 900L)
+        val callerTrust = mapCallerTrust(resolveCallerNumber())
 
-        val recentCallContext = callActive || secondsSinceEnd <= 180L
+        val recentCallContext = callActive || secondsSinceEnd <= 180L || recentCall != null
         if (!recentCallContext) return
 
+        val isMarkedScammer = callerTrust == CallerTrust.SCAMMER_MARKED
         val isUnknownContext = callerTrust == CallerTrust.UNKNOWN || callerTrust == CallerTrust.REPEATED_UNKNOWN
-        val score = if (isUnknownContext) 84 else 62
-        val label = if (isUnknownContext) "HIGH_RISK" else "SUSPICIOUS"
-        val message = if (isUnknownContext) {
-            "High risk: payment attempt right after an unknown/recent call. Pause and verify independently."
-        } else {
-            "Unusual payment timing after a call detected. Please verify before you proceed."
+        val shouldAlert = isMarkedScammer || isUnknownContext
+        if (!shouldAlert) {
+            Log.d("SentinelX", "Pre-payment intervention skipped for trusted callerTrust=${callerTrust.name}")
+            return
+        }
+        val score = if (isMarkedScammer) 96 else 84
+        val label = "HIGH_RISK"
+        val message = when {
+            isMarkedScammer ->
+                "Critical risk: this caller is in your scammer list. Stop payment and verify through a trusted channel."
+            isUnknownContext ->
+                "High risk: payment attempt right after an unknown/recent call. Pause and verify independently."
+            else -> "High risk payment behavior detected."
         }
 
         val signals = listOf(

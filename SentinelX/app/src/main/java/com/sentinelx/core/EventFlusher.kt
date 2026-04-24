@@ -107,19 +107,25 @@ class EventFlusher(
                 context = context,
                 status = "Risk $score/120 ($label)",
             )
-            InterventionManager.show(
-                context = context,
-                score = score,
-                label = label,
-                llmUserPrompt = userPrompt,
-                signals = signalList,
-            )
-            if (label.equals("HIGH_RISK", ignoreCase = true)) {
-                guardianManager.alertGuardian(
+            val callerTrust = payload.caller_trust.uppercase()
+            val shouldIntervene = callerTrust in setOf("UNKNOWN", "REPEATED_UNKNOWN", "SCAMMER_MARKED")
+            if (shouldIntervene) {
+                InterventionManager.show(
+                    context = context,
                     score = score,
-                    llmSummary = guardianMessage,
-                    threatType = threatType,
+                    label = label,
+                    llmUserPrompt = userPrompt,
+                    signals = signalList,
                 )
+                if (label.equals("HIGH_RISK", ignoreCase = true)) {
+                    guardianManager.alertGuardian(
+                        score = score,
+                        llmSummary = guardianMessage,
+                        threatType = threatType,
+                    )
+                }
+            } else {
+                Log.d("SentinelX", "Intervention skipped for trusted callerTrust=$callerTrust")
             }
         }
     }

@@ -19,6 +19,11 @@ data class CallEndEvent(
     val endTs: Long,
 )
 
+data class RecentCallInfo(
+    val number: String,
+    val ts: Long,
+)
+
 class CallStateMonitor(
     private val context: Context,
     private val onCallEnd: ((CallEndEvent) -> Unit)? = null,
@@ -80,6 +85,36 @@ class CallStateMonitor(
         val end = callEndTs.get()
         if (end <= 0L) return Long.MAX_VALUE
         return ((System.currentTimeMillis() - end) / 1000L).coerceAtLeast(0L)
+    }
+
+    fun getRecentCallNumber(maxAgeSeconds: Long = 600L): String {
+        return getRecentCallInfo(maxAgeSeconds)?.number.orEmpty()
+    }
+
+    fun getRecentCallInfo(maxAgeSeconds: Long = 600L): RecentCallInfo? {
+        if (!hasCallLogPermission()) return null
+        var cursor: Cursor? = null
+        return try {
+            cursor = context.contentResolver.query(
+                CallLog.Calls.CONTENT_URI,
+                arrayOf(CallLog.Calls.NUMBER, CallLog.Calls.DATE),
+                null,
+                null,
+                "${CallLog.Calls.DATE} DESC",
+            )
+            if (cursor != null && cursor.moveToFirst()) {
+                val number = cursor.getString(0).orEmpty()
+                val ts = cursor.getLong(1)
+                val ageSeconds = ((System.currentTimeMillis() - ts) / 1000L).coerceAtLeast(0L)
+                if (ageSeconds <= maxAgeSeconds) RecentCallInfo(number = number, ts = ts) else null
+            } else {
+                null
+            }
+        } catch (_: Exception) {
+            null
+        } finally {
+            cursor?.close()
+        }
     }
 
     private fun startWithTelephonyCallback() {

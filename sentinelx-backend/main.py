@@ -62,6 +62,8 @@ def _caller_trust_points(value: str) -> int:
         return 0
     if normalized in {"BUSINESS", "BUSINESS_NUMBER"}:
         return 5
+    if normalized in {"SCAMMER_MARKED", "MANUAL_SCAMMER"}:
+        return 30
     if normalized == "REPEATED_UNKNOWN":
         return 22
     return 15

@@ -28,6 +28,7 @@ enum class CallerTrust(val riskPts: Int) {
     BUSINESS_NUMBER(5),
     UNKNOWN(15),
     REPEATED_UNKNOWN(22),
+    SCAMMER_MARKED(30),
 }
 
 enum class InteractionType {

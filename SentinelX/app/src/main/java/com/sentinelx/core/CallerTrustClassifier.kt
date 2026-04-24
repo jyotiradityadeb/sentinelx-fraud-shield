@@ -10,12 +10,14 @@ class CallerTrustClassifier(
     private val context: Context,
     private val hashProvider: NumberHashProvider = DefaultNumberHashProvider(),
     initialThreatCache: Map<String, Int> = emptyMap(),
+    private val scammerNumberStore: ScammerNumberStore = ScammerNumberStore(context),
 ) {
     enum class CallerTrust {
         KNOWN_CONTACT,
         BUSINESS_NUMBER,
         UNKNOWN,
         REPEATED_UNKNOWN,
+        SCAMMER_MARKED,
         NETWORK_FLAGGED,
     }
 
@@ -36,6 +38,11 @@ class CallerTrustClassifier(
         if (normalized.isBlank()) return setOf(CallerTrust.UNKNOWN)
 
         val labels = mutableSetOf<CallerTrust>()
+
+        if (scammerNumberStore.isMarked(normalized)) {
+            labels += CallerTrust.SCAMMER_MARKED
+            labels += CallerTrust.UNKNOWN
+        }
 
         if (isKnownContact(normalized)) {
             labels += CallerTrust.KNOWN_CONTACT
